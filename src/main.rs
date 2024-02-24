@@ -1,12 +1,9 @@
 use core::panic;
 use std::{env, fs, io::{self, stdout, Stdout, Write}, process::exit};
-use crossterm::{cursor, event::{self, Event, KeyCode},
-    terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
+use crossterm::{cursor, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
 };
 use ratatui::{prelude::*, widgets::*};
-
-#[derive(Default)]
+#[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
     #[default]
     NORMAL,
@@ -105,17 +102,55 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     editor_config.terminal.set_cursor(0, 0)?;
     let rowoff: usize = editor_config.rowoff.into();
     for y in 0..editor_config.screenrows as usize{
-        stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
-        stdout().write_all(b"\r\n")?; // Write a newline after each line
+        // line numbering
+        let lineno = (y + rowoff).to_string();
+        let cy = usize::from(editor_config.cy);
+        let lineoff = cy.abs_diff(y + rowoff).to_string();
+        if y + rowoff == editor_config.cy.into() {
+            let spaces = " ".repeat(5 - lineno.len());
+            stdout().execute(SetForegroundColor(crossterm::style::Color::Blue))?;
+            stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
+            stdout().execute(ResetColor)?;
+            stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
+            stdout().write_all(b"\r\n")?; // Write a newline after each line
+        } else {
+            let spaces = " ".repeat(5 - lineoff.len());
+            stdout().execute(SetForegroundColor(crossterm::style::Color::Black))?;
+            stdout().write_all(format!("{}{} ", spaces, lineoff).as_bytes())?;
+            stdout().execute(ResetColor)?;
+            stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
+            stdout().write_all(b"\r\n")?; // Write a newline after each line
+        }
+    }
+    // write status line
+    draw_status(editor_config)?;
+    if editor_config.mode == Mode::COMMAND {
+        draw_command(editor_config)?;
     }
     editor_config.terminal.flush()?;
     let row: usize = editor_config.cy.into();
-    editor_config.terminal.set_cursor(editor_config.cx, editor_config.cy)?;
+    editor_config.terminal.set_cursor(editor_config.cx + 6, editor_config.cy - editor_config.rowoff)?;
     if usize::from(editor_config.cx) > editor_config.rows[row].len() {
         editor_config.terminal.set_cursor(editor_config.rows[row].len().try_into().unwrap(), editor_config.cy)?;
         editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].len()).unwrap();
     }
     editor_config.terminal.show_cursor()?;
+    Ok(())
+}
+
+fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
+    stdout().execute(SetForegroundColor(crossterm::style::Color::Red))?;
+    stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
+    stdout().write_all(editor_config.filename.as_bytes())?;
+    stdout().execute(ResetColor)?;
+    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx).as_bytes())?;
+    stdout().write_all(b"\r\n")?; // Write a newline after each line
+    Ok(())
+}
+
+fn draw_command(editor_config: &mut EditorConfig) -> io::Result<()>{
+    stdout().write_all(b":")?;
+
     Ok(())
 }
 
@@ -187,6 +222,12 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                     }
                     'a' => {
                         editor_config.cx += 1;
+                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                        editor_config.mode = Mode::INSERT;
+                    }
+                    'o' => {
+                        editor_config.cy += 1;
+                        editor_config.rows.insert(editor_config.cy.into(), String::from(""));
                         stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                         editor_config.mode = Mode::INSERT;
                     }
