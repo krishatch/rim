@@ -1,6 +1,6 @@
 use core::panic;
 use std::{env, fs, io::{self, stdout, Stdout, Write}, process::exit};
-use crossterm::{event::{self, Event, KeyCode},
+use crossterm::{cursor, event::{self, Event, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -77,22 +77,44 @@ fn main() -> io::Result<()> {
         
         refresh = match editor_config.mode {
             Mode::NORMAL => handle_normal(&mut editor_config).unwrap(),
-            Mode::INSERT => handle_insert().unwrap(),
-            Mode::VISUAL => handle_visual().unwrap(),
-            Mode::COMMAND => handle_command().unwrap(),
+            Mode::INSERT => handle_insert(&mut editor_config).unwrap(),
+            Mode::VISUAL => handle_visual(&mut editor_config).unwrap(),
+            Mode::COMMAND => handle_command(&mut editor_config).unwrap(),
         };
     }
 }
 
+fn editor_scroll(editor_config: &mut EditorConfig) {
+  if editor_config.cy < editor_config.rowoff {
+    editor_config.rowoff = editor_config.cy;
+  } else if editor_config.cy >= editor_config.rowoff + editor_config.screenrows {
+    editor_config.rowoff = editor_config.cy - editor_config.screenrows + 1;
+  }
+
+  if editor_config.rx < editor_config.coloff {
+    editor_config.coloff = editor_config.rx;
+  } else if editor_config.rx >= editor_config.coloff + editor_config.screencols {
+    editor_config.coloff = editor_config.rx - editor_config.screencols + 1;
+  }
+}
+
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
+    editor_scroll(editor_config);
+    editor_config.terminal.clear()?;
     editor_config.terminal.hide_cursor()?;
     editor_config.terminal.set_cursor(0, 0)?;
-    for line in editor_config.rows.iter(){
-        stdout().write_all(line.as_bytes())?;
+    let rowoff: usize = editor_config.rowoff.into();
+    for y in 0..editor_config.screenrows as usize{
+        stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
         stdout().write_all(b"\r\n")?; // Write a newline after each line
     }
     editor_config.terminal.flush()?;
+    let row: usize = editor_config.cy.into();
     editor_config.terminal.set_cursor(editor_config.cx, editor_config.cy)?;
+    if usize::from(editor_config.cx) > editor_config.rows[row].len() {
+        editor_config.terminal.set_cursor(editor_config.rows[row].len().try_into().unwrap(), editor_config.cy)?;
+        editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].len()).unwrap();
+    }
     editor_config.terminal.show_cursor()?;
     Ok(())
 }
@@ -114,6 +136,13 @@ fn editor_open(editor_config: &mut EditorConfig, filename: String) -> io::Result
         insert_row(editor_config, editor_config.numrows, line.to_string());
     }
     editor_config.dirty = false;
+    editor_config.filename = filename;
+    Ok(())
+}
+
+fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
+    let content = editor_config.rows.join("\n");
+    fs::write(editor_config.filename.clone(), content)?;
     Ok(())
 }
 
@@ -136,30 +165,64 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                     stdout().execute(LeaveAlternateScreen)?;
                     exit(0);
                     }
+                    'h' => {
+                        if editor_config.cx > 0 {editor_config.cx -= 1;}
+                    }
                     'j' => {
                         if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
-                        return Ok(true);
                     }
                     'k' => {
                         if editor_config.cy > 0 {editor_config.cy -= 1;}
-                        return Ok(true);
+                    }
+                    'l' => {
+                        let row: usize = editor_config.cy.into();
+                        if usize::from(editor_config.cx) < editor_config.rows[row].len() - 1 {editor_config.cx += 1;}
+                    }
+                    'w' =>{
+                        editor_save(editor_config)?;
+                    }
+                    'i' => {
+                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                        editor_config.mode = Mode::INSERT;
+                    }
+                    'a' => {
+                        editor_config.cx += 1;
+                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                        editor_config.mode = Mode::INSERT;
                     }
                     _ => {}
                 }
+                return Ok(true);
             } 
         }
     }
     Ok(false)
 }
 
-fn handle_insert() -> io::Result<bool>{ 
+fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
+    if event::poll(std::time::Duration::from_millis(50))?{
+        if let Event::Key(key) = event::read()? {
+            if let KeyCode::Char(c) = key.code {
+                stdout().write_all(&[c as u8])?;
+                let cy: usize = editor_config.cy.into();
+                editor_config.rows[cy].insert(editor_config.cx.into(), c);
+                editor_config.cx += 1;
+            }
+            if key.code == KeyCode::Esc {
+                stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                editor_config.mode = Mode::NORMAL;
+            }
+            return Ok(true)
+        }
+    }
     Ok(false)
 }
 
-fn handle_visual() -> io::Result<bool>{ 
+fn handle_visual(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
     Ok(false)
 }
 
-fn handle_command() -> io::Result<bool>{ 
+fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
     Ok(false)
 }
+
