@@ -1,6 +1,6 @@
 use core::panic;
-use std::{env, fs, io::{self, stdout, Stdout, Write}, process::exit};
-use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
+use std::{env, fmt::Debug, fs, io::{self, stdout, Stdout, Write}, process::exit};
+use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
 };
 use ratatui::{prelude::*, widgets::*};
 #[derive(Default, PartialEq, PartialOrd)]
@@ -109,6 +109,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     let rowoff: usize = editor_config.rowoff.into();
     for y in 0..editor_config.screenrows as usize{
         // line numbering
+        if y >= editor_config.numrows.into() {break;}
         let lineno = (y + rowoff).to_string();
         let cy = usize::from(editor_config.cy);
         let lineoff = cy.abs_diff(y + rowoff).to_string();
@@ -142,7 +143,8 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
 }
 
 fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
-    stdout().execute(SetForegroundColor(crossterm::style::Color::Red))?;
+    stdout().execute(SavePosition)?;
+    editor_config.terminal.set_cursor(0, editor_config.screenrows)?;
     stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
     stdout().write_all(editor_config.filename.as_bytes())?;
     if editor_config.dirty {
@@ -151,6 +153,8 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
     stdout().execute(ResetColor)?;
     stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx).as_bytes())?;
     stdout().write_all(b"\r\n")?; // Write a newline after each line
+    stdout().write_all(editor_config.status_msg.as_bytes())?;
+    stdout().execute(RestorePosition)?;
     Ok(())
 }
 
@@ -164,22 +168,29 @@ fn draw_command(editor_config: &mut EditorConfig) -> io::Result<()>{
     Ok(())
 }
 
+fn set_status_message(editor_config: &mut EditorConfig, message: String) -> io::Result<()> {
+    editor_config.status_msg = message;
+    Ok(())
+}
 
 fn editor_open(editor_config: &mut EditorConfig, filename: String) -> io::Result<()>{
     let file: String = match fs::read_to_string(filename.clone()){
         Ok(file_content) => file_content,
-        Err(e) => {
-            panic!("Error reading file '{}': {}", filename, e);
+        Err(_) => {
+            let mut file = fs::File::create(&filename)?;
+            let empty_file = "\r\n".repeat(editor_config.numrows.into());
+            file.write_all(empty_file.as_bytes())?; // Write an empty string to create the file
+            insert_row(editor_config, 0, String::default());
+            set_status_message(editor_config, String::from("new file"))?;
+            String::new()
         }
     };
 
     for line in file.lines(){
-        let mut linelen = line.len();
-        while linelen > 0 && (line.chars().nth(linelen - 1) == Some('\n') || line.chars().nth(linelen - 1) == Some('r')) {
-            linelen -= 1;
-        }
         insert_row(editor_config, editor_config.numrows, line.to_string());
     }
+    if editor_config.numrows == 0 {insert_row(editor_config, 0, String::new())}
+    set_status_message(editor_config, format!("Number of rows: {}", editor_config.numrows))?;
     editor_config.dirty = false;
     editor_config.filename = filename;
     Ok(())
@@ -206,11 +217,6 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
                 match c {
-                    'q' => {
-                    disable_raw_mode()?;
-                    stdout().execute(LeaveAlternateScreen)?;
-                    exit(0);
-                    }
                     'h' => {
                         if editor_config.cx > 0 {editor_config.cx -= 1;}
                     }
@@ -223,9 +229,6 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                     'l' => {
                         let row: usize = editor_config.cy.into();
                         if usize::from(editor_config.cx) < editor_config.rows[row].len() - 1 {editor_config.cx += 1;}
-                    }
-                    'w' =>{
-                        editor_save(editor_config)?;
                     }
                     'i' => {
                         stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
@@ -268,6 +271,26 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
             if key.code == KeyCode::Esc {
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::NORMAL;
+            }
+            if key.code == KeyCode::Enter {
+                insert_row(editor_config, editor_config.cy+1, String::new());
+                editor_config.cy += 1;
+                editor_config.cx = 0;
+            }
+            if key.code == KeyCode::Backspace {
+                let cy: usize = editor_config.cy.into();
+                let len = editor_config.rows[cy].len() as u16;
+                if editor_config.cx <= len && editor_config.cx > 0{
+                    editor_config.rows[cy].remove((editor_config.cx - 1).into());
+                    editor_config.cx -= 1;
+                } else if editor_config.cx == 0 && editor_config.cy > 0 {
+                    let cur_str = editor_config.rows[cy].clone();
+                    let new_cx = editor_config.rows[cy - 1].len() as u16;
+                    editor_config.rows[cy - 1].push_str(&cur_str);
+                    editor_config.rows.remove(cy);
+                    editor_config.cy -= 1;
+                    editor_config.cx = new_cx;
+                }
             }
             editor_config.dirty = true;
             return Ok(true)
@@ -316,6 +339,7 @@ fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{
                             stdout().execute(LeaveAlternateScreen)?;
                             exit(0);
                         } else {
+                            set_status_message(editor_config, String::from("FILE HAS NOT BEEN SAVED!"))?;
                             stdout().execute(RestorePosition)?;
                         }
                     }
