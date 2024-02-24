@@ -1,6 +1,6 @@
 use core::panic;
 use std::{env, fs, io::{self, stdout, Stdout, Write}, process::exit};
-use crossterm::{cursor, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
+use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
 };
 use ratatui::{prelude::*, widgets::*};
 #[derive(Default, PartialEq, PartialOrd)]
@@ -27,6 +27,7 @@ struct EditorConfig {
     dirty: bool,
     filename: String,
     status_msg: String,
+    command: String,
     b_wrap: u16,
     v_cx: u16,
     v_cy: u16, 
@@ -52,6 +53,7 @@ impl EditorConfig {
             dirty: false,
             filename: String::default(),
             status_msg: String::default(),
+            command: String::default(),
             b_wrap: 0,
             v_cx: 0,
             v_cy: 0,
@@ -96,6 +98,10 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 }
 
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
+    if editor_config.mode == Mode::COMMAND {
+        draw_command(editor_config)?;
+        return Ok(());
+    }
     editor_scroll(editor_config);
     editor_config.terminal.clear()?;
     editor_config.terminal.hide_cursor()?;
@@ -124,9 +130,6 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     }
     // write status line
     draw_status(editor_config)?;
-    if editor_config.mode == Mode::COMMAND {
-        draw_command(editor_config)?;
-    }
     editor_config.terminal.flush()?;
     let row: usize = editor_config.cy.into();
     editor_config.terminal.set_cursor(editor_config.cx + 6, editor_config.cy - editor_config.rowoff)?;
@@ -142,6 +145,9 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
     stdout().execute(SetForegroundColor(crossterm::style::Color::Red))?;
     stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
     stdout().write_all(editor_config.filename.as_bytes())?;
+    if editor_config.dirty {
+        stdout().write_all(b" [+] ")?;
+    }
     stdout().execute(ResetColor)?;
     stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx).as_bytes())?;
     stdout().write_all(b"\r\n")?; // Write a newline after each line
@@ -149,8 +155,12 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
 }
 
 fn draw_command(editor_config: &mut EditorConfig) -> io::Result<()>{
+    editor_config.terminal.set_cursor(0, editor_config.screenrows + 1)?;
+    stdout().execute(Clear(ClearType::CurrentLine))?;
     stdout().write_all(b":")?;
-
+    stdout().write_all(editor_config.command.as_bytes())?;
+    let cmdlen = editor_config.command.len() as u16;
+    editor_config.terminal.set_cursor(1 + cmdlen, editor_config.screenrows + 1)?;
     Ok(())
 }
 
@@ -178,6 +188,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: String) -> io::Result
 fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
     let content = editor_config.rows.join("\n");
     fs::write(editor_config.filename.clone(), content)?;
+    editor_config.dirty = false;
     Ok(())
 }
 
@@ -231,6 +242,11 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                         stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                         editor_config.mode = Mode::INSERT;
                     }
+                    ':' => {
+                        editor_config.mode = Mode::COMMAND;
+                        stdout().execute(SavePosition)?;
+                        editor_config.terminal.set_cursor(1, editor_config.numrows)?;
+                    }
                     _ => {}
                 }
                 return Ok(true);
@@ -253,6 +269,7 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::NORMAL;
             }
+            editor_config.dirty = true;
             return Ok(true)
         }
     }
@@ -260,10 +277,69 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
 }
 
 fn handle_visual(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
+    if event::poll(std::time::Duration::from_millis(50))?{
+        if let Event::Key(key) = event::read()? {
+            if key.code == KeyCode::Esc {
+                stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                editor_config.mode = Mode::NORMAL;
+            }
+            editor_config.dirty = true;
+            return Ok(true)
+        }
+    }
     Ok(false)
 }
 
 fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
+    if event::poll(std::time::Duration::from_millis(50))?{
+        if let Event::Key(key) = event::read()? {
+            if key.code == KeyCode::Esc {
+                editor_config.command = String::default();
+                stdout().execute(RestorePosition)?;
+                editor_config.mode = Mode::NORMAL;
+            }
+            if let KeyCode::Char(c) = key.code {
+                editor_config.command.push(c);
+            }
+            if key.code == KeyCode::Backspace {
+                editor_config.command.pop();
+            }
+            if key.code == KeyCode::Enter {
+                match editor_config.command.as_str() {
+                    "w" => {
+                        editor_save(editor_config)?;
+                        stdout().execute(RestorePosition)?;
+                    }
+                    "q" => {
+                        if !(editor_config.dirty) {
+                            disable_raw_mode()?;
+                            stdout().execute(LeaveAlternateScreen)?;
+                            exit(0);
+                        } else {
+                            stdout().execute(RestorePosition)?;
+                        }
+                    }
+                    "wq" => {
+                        editor_save(editor_config)?;
+                        disable_raw_mode()?;
+                        stdout().execute(LeaveAlternateScreen)?;
+                        exit(0);
+                    }
+                    "q!" => {
+                        disable_raw_mode()?;
+                        stdout().execute(LeaveAlternateScreen)?;
+                        exit(0);
+                    }
+                    _ => {
+                        stdout().execute(RestorePosition)?;
+                    }
+                }
+                editor_config.command = String::default();
+                editor_config.mode = Mode::NORMAL;
+            }
+            return Ok(true)
+        }
+    }
     Ok(false)
 }
 
