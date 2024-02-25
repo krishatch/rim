@@ -4,8 +4,13 @@ use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Eve
 };
 use ratatui::{prelude::*, widgets::*};
 
+
+const C_HL_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
+const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    "break",
+                         "continue",  "return",  "else",    "struct", "union",
+                         "typedef",   "static",  "enum",    "class",  "case"];
 const TAB_LENGTH: u16 = 4;
-const SEPARATORS: [char; 7] = [' ', '.', ',', '(', ')', '<', '>'];
+const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 #[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
     #[default]
@@ -13,6 +18,20 @@ enum Mode {
     INSERT,
     VISUAL,
     COMMAND,
+}
+
+struct Erow {
+    data: String,
+    highlight: Vec<crossterm::style::Color>
+}
+
+impl Erow {
+    fn new() -> Erow {
+        Erow {
+            data: String::default(),
+            highlight: vec![],
+        }
+    }
 }
 
 struct EditorConfig {
@@ -26,7 +45,7 @@ struct EditorConfig {
     screenrows: u16,
     screencols: u16,
     numrows: u16,
-    rows: Vec<String>,
+    rows: Vec<Erow>,
     dirty: bool,
     filename: String, 
     status_msg: String,
@@ -123,14 +142,14 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             stdout().execute(SetForegroundColor(crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }))?;
             stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
             stdout().execute(ResetColor)?;
-            stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
+            stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
             stdout().write_all(b"\r\n")?; // Write a newline after each line
         } else {
             let spaces = " ".repeat(5 - lineoff.len());
             stdout().execute(SetForegroundColor(crossterm::style::Color::Black))?;
             stdout().write_all(format!("{}{} ", spaces, lineoff).as_bytes())?;
             stdout().execute(ResetColor)?;
-            stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
+            stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
             stdout().write_all(b"\r\n")?; // Write a newline after each line
         }
     }
@@ -139,9 +158,9 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     editor_config.terminal.flush()?;
     let row: usize = editor_config.cy.into();
     editor_config.terminal.set_cursor(editor_config.cx + 6, editor_config.cy - editor_config.rowoff)?;
-    if usize::from(editor_config.cx) > editor_config.rows[row].len() {
-        editor_config.terminal.set_cursor(editor_config.rows[row].len().try_into().unwrap(), editor_config.cy)?;
-        editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].len()).unwrap();
+    if usize::from(editor_config.cx) > editor_config.rows[row].data.len() {
+        editor_config.terminal.set_cursor(editor_config.rows[row].data.len().try_into().unwrap(), editor_config.cy)?;
+        editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].data.len()).unwrap();
     }
     editor_config.terminal.show_cursor()?;
     Ok(())
@@ -156,7 +175,7 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
         stdout().write_all(b" [+] ")?;
     }
     stdout().execute(ResetColor)?;
-    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].len()).as_bytes())?;
+    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].data.len()).as_bytes())?;
     stdout().write_all(b"\r\n")?; // Write a newline after each line
     stdout().write_all(editor_config.status_msg.as_bytes())?;
     stdout().execute(RestorePosition)?;
@@ -202,7 +221,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: String) -> io::Result
 }
 
 fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
-    let content = editor_config.rows.join("\n");
+    let content = editor_config.rows.iter()
+        .map(|s| &s.data)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
     fs::write(editor_config.filename.clone(), content)?;
     editor_config.dirty = false;
     Ok(())
@@ -211,7 +234,9 @@ fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
 fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
     if at > editor_config.numrows {return;}
 
-    editor_config.rows.insert(at.into(), s);
+    let mut new_row = Erow::new();
+    new_row.data = s;
+    editor_config.rows.insert(at.into(), new_row);
     editor_config.numrows += 1;
     editor_config.dirty = true;
 }
@@ -230,7 +255,7 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                             editor_config.mode = Mode::INSERT;
                         }
                         'A' => {
-                            editor_config.cx = curr_row.len() as u16;
+                            editor_config.cx = curr_row.data.len() as u16;
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                             editor_config.mode = Mode::INSERT;
 
@@ -249,29 +274,37 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                             if editor_config.cy > 0 {editor_config.cy -= 1;}
                         }
                         'l' => {
-                            if usize::from(editor_config.cx) < curr_row.len() - 1 {editor_config.cx += 1;}
+                            if usize::from(editor_config.cx) < curr_row.data.len() - 1 {editor_config.cx += 1;}
                         }
                         'o' => {
                             editor_config.cy += 1;
-                            editor_config.rows.insert(editor_config.cy.into(), String::from(""));
+                            editor_config.rows.insert(editor_config.cy.into(), Erow::new());
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                             editor_config.mode = Mode::INSERT;
                         }
                         'w' => {
                             let mut sep = false;
                             while !sep {
-                                if editor_config.cx as usize == curr_row.len() {
+                                if editor_config.cx as usize == curr_row.data.len() && editor_config.cy == editor_config.numrows - 1 {
+                                   sep = true; 
+                                } else if editor_config.cx as usize == curr_row.data.len() {
                                     editor_config.cx = 0;
                                     editor_config.cy += 1;
                                     curr_row = &mut editor_config.rows[editor_config.cy as usize];
-                                } else if SEPARATORS.contains(&curr_row.chars().nth(editor_config.cx as usize).unwrap()) {
+                                    if editor_config.cx  < curr_row.data.len() as u16 && !(SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap())){
+                                        sep = true;
+
+                                    }
+                                } else if SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap()) {
+                                    while editor_config.cx < curr_row.data.len() as u16 && SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap()) {
+                                        editor_config.cx += 1;
+                                    }
                                     sep = true;
                                 }
                                 else {
                                     editor_config.cx += 1;
                                 }
                             }
-                            editor_config.cx += 1;
                         }
                         ':' => {
                             editor_config.mode = Mode::COMMAND;
@@ -305,13 +338,13 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
             if let KeyCode::Char(c) = key.code {
                 stdout().write_all(&[c as u8])?;
                 let cy: usize = editor_config.cy.into();
-                editor_config.rows[cy].insert(editor_config.cx.into(), c);
+                editor_config.rows[cy].data.insert(editor_config.cx.into(), c);
                 editor_config.cx += 1;
             }
             if key.code == KeyCode::Tab {
                 let spaces = " ".repeat(TAB_LENGTH.into());
                 let cy: usize = editor_config.cy.into();
-                editor_config.rows[cy].insert_str(editor_config.cx.into(), &spaces);
+                editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &spaces);
                 stdout().write_all(spaces.as_bytes())?;
                 editor_config.cx += TAB_LENGTH;
             }
@@ -327,15 +360,15 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
             }
             if key.code == KeyCode::Backspace {
                 let cy: usize = editor_config.cy.into();
-                let len = editor_config.rows[cy].len() as u16;
+                let len = editor_config.rows[cy].data.len() as u16;
                 if editor_config.cx <= len && editor_config.cx > 0{
-                    editor_config.rows[cy].remove((editor_config.cx - 1).into());
+                    editor_config.rows[cy].data.remove((editor_config.cx - 1).into());
                     editor_config.cx -= 1;
                 } else if editor_config.cx == 0 && editor_config.cy > 0 {
                     // delete the current line
-                    let cur_str = editor_config.rows[cy].clone();
-                    let new_cx = editor_config.rows[cy - 1].len() as u16;
-                    editor_config.rows[cy - 1].push_str(&cur_str);
+                    let cur_str = editor_config.rows[cy].data.clone();
+                    let new_cx = editor_config.rows[cy - 1].data.len() as u16;
+                    editor_config.rows[cy - 1].data.push_str(&cur_str);
                     editor_config.rows.remove(cy);
                     editor_config.cy -= 1;
                     editor_config.cx = new_cx;
