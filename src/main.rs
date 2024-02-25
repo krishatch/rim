@@ -3,6 +3,9 @@ use std::{env, fmt::Debug, fs, io::{self, stdout, Stdout, Write}, process::exit}
 use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
 };
 use ratatui::{prelude::*, widgets::*};
+
+const TAB_LENGTH: u16 = 4;
+const SEPARATORS: [char; 7] = [' ', '.', ',', '(', ')', '<', '>'];
 #[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
     #[default]
@@ -25,9 +28,10 @@ struct EditorConfig {
     numrows: u16,
     rows: Vec<String>,
     dirty: bool,
-    filename: String,
+    filename: String, 
     status_msg: String,
     command: String,
+    motion_count: u16,
     b_wrap: u16,
     v_cx: u16,
     v_cy: u16, 
@@ -54,6 +58,7 @@ impl EditorConfig {
             filename: String::default(),
             status_msg: String::default(),
             command: String::default(),
+            motion_count: 1,
             b_wrap: 0,
             v_cx: 0,
             v_cy: 0,
@@ -115,7 +120,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         let lineoff = cy.abs_diff(y + rowoff).to_string();
         if y + rowoff == editor_config.cy.into() {
             let spaces = " ".repeat(5 - lineno.len());
-            stdout().execute(SetForegroundColor(crossterm::style::Color::Blue))?;
+            stdout().execute(SetForegroundColor(crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }))?;
             stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
             stdout().execute(ResetColor)?;
             stdout().write_all(editor_config.rows[y + rowoff].clone().as_bytes())?;
@@ -151,7 +156,7 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
         stdout().write_all(b" [+] ")?;
     }
     stdout().execute(ResetColor)?;
-    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx).as_bytes())?;
+    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].len()).as_bytes())?;
     stdout().write_all(b"\r\n")?; // Write a newline after each line
     stdout().write_all(editor_config.status_msg.as_bytes())?;
     stdout().execute(RestorePosition)?;
@@ -216,42 +221,77 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
     if event::poll(std::time::Duration::from_millis(50))?{
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
-                match c {
-                    'h' => {
-                        if editor_config.cx > 0 {editor_config.cx -= 1;}
+                for _i in 0..editor_config.motion_count{
+                    let mut curr_row = &mut editor_config.rows[editor_config.cy as usize];
+                    match c {
+                        'a' => {
+                            editor_config.cx += 1;
+                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                            editor_config.mode = Mode::INSERT;
+                        }
+                        'A' => {
+                            editor_config.cx = curr_row.len() as u16;
+                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                            editor_config.mode = Mode::INSERT;
+
+                        }
+                        'h' => {
+                            if editor_config.cx > 0 {editor_config.cx -= 1;}
+                        }
+                        'i' => {
+                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                            editor_config.mode = Mode::INSERT;
+                        }
+                        'j' => {
+                            if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
+                        }
+                        'k' => {
+                            if editor_config.cy > 0 {editor_config.cy -= 1;}
+                        }
+                        'l' => {
+                            if usize::from(editor_config.cx) < curr_row.len() - 1 {editor_config.cx += 1;}
+                        }
+                        'o' => {
+                            editor_config.cy += 1;
+                            editor_config.rows.insert(editor_config.cy.into(), String::from(""));
+                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                            editor_config.mode = Mode::INSERT;
+                        }
+                        'w' => {
+                            let mut sep = false;
+                            while !sep {
+                                if editor_config.cx as usize == curr_row.len() {
+                                    editor_config.cx = 0;
+                                    editor_config.cy += 1;
+                                    curr_row = &mut editor_config.rows[editor_config.cy as usize];
+                                } else if SEPARATORS.contains(&curr_row.chars().nth(editor_config.cx as usize).unwrap()) {
+                                    sep = true;
+                                }
+                                else {
+                                    editor_config.cx += 1;
+                                }
+                            }
+                            editor_config.cx += 1;
+                        }
+                        ':' => {
+                            editor_config.mode = Mode::COMMAND;
+                            stdout().execute(SavePosition)?;
+                            editor_config.terminal.set_cursor(1, editor_config.numrows)?;
+                        }
+                        '0'..='9' => {
+                            let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
+                            if editor_config.motion_count == 1 {editor_config.motion_count = num;}
+                            else{
+                                editor_config.motion_count *= 10;
+                                editor_config.motion_count += num;
+                            }
+                            set_status_message(editor_config, editor_config.motion_count.to_string())?;
+                            return Ok(true);
+                        }
+                        _ => {}
                     }
-                    'j' => {
-                        if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
-                    }
-                    'k' => {
-                        if editor_config.cy > 0 {editor_config.cy -= 1;}
-                    }
-                    'l' => {
-                        let row: usize = editor_config.cy.into();
-                        if usize::from(editor_config.cx) < editor_config.rows[row].len() - 1 {editor_config.cx += 1;}
-                    }
-                    'i' => {
-                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                        editor_config.mode = Mode::INSERT;
-                    }
-                    'a' => {
-                        editor_config.cx += 1;
-                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                        editor_config.mode = Mode::INSERT;
-                    }
-                    'o' => {
-                        editor_config.cy += 1;
-                        editor_config.rows.insert(editor_config.cy.into(), String::from(""));
-                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                        editor_config.mode = Mode::INSERT;
-                    }
-                    ':' => {
-                        editor_config.mode = Mode::COMMAND;
-                        stdout().execute(SavePosition)?;
-                        editor_config.terminal.set_cursor(1, editor_config.numrows)?;
-                    }
-                    _ => {}
                 }
+                editor_config.motion_count = 1;
                 return Ok(true);
             } 
         }
@@ -268,7 +308,15 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 editor_config.rows[cy].insert(editor_config.cx.into(), c);
                 editor_config.cx += 1;
             }
+            if key.code == KeyCode::Tab {
+                let spaces = " ".repeat(TAB_LENGTH.into());
+                let cy: usize = editor_config.cy.into();
+                editor_config.rows[cy].insert_str(editor_config.cx.into(), &spaces);
+                stdout().write_all(spaces.as_bytes())?;
+                editor_config.cx += TAB_LENGTH;
+            }
             if key.code == KeyCode::Esc {
+                if editor_config.cx > 0 {editor_config.cx -= 1;}
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::NORMAL;
             }
@@ -284,12 +332,14 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     editor_config.rows[cy].remove((editor_config.cx - 1).into());
                     editor_config.cx -= 1;
                 } else if editor_config.cx == 0 && editor_config.cy > 0 {
+                    // delete the current line
                     let cur_str = editor_config.rows[cy].clone();
                     let new_cx = editor_config.rows[cy - 1].len() as u16;
                     editor_config.rows[cy - 1].push_str(&cur_str);
                     editor_config.rows.remove(cy);
                     editor_config.cy -= 1;
                     editor_config.cx = new_cx;
+                    editor_config.numrows -= 1;
                 }
             }
             editor_config.dirty = true;
