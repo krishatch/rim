@@ -1,8 +1,6 @@
-use core::panic;
-use std::{env, fmt::Debug, fs, io::{self, stdout, Stdout, Write}, process::exit};
-use crossterm::{cursor::{self, RestorePosition, SavePosition}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
+use std::{env, fs, io::{self, stdout,  Write}, process::exit};
+use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
 };
-use ratatui::{prelude::*, widgets::*};
 
 
 const C_HL_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
@@ -35,7 +33,6 @@ impl Erow {
 }
 
 struct EditorConfig {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
     mode: Mode,
     cx: u16,
     cy: u16,
@@ -51,15 +48,10 @@ struct EditorConfig {
     status_msg: String,
     command: String,
     motion_count: u16,
-    b_wrap: u16,
-    v_cx: u16,
-    v_cy: u16, 
 }
 
 impl EditorConfig {
     fn new() -> io::Result<Self> {
-        let backend = CrosstermBackend::new(stdout());
-        let terminal = Terminal::new(backend)?;
         let (cols, rows) = size()?;
 
         Ok(EditorConfig {
@@ -78,10 +70,6 @@ impl EditorConfig {
             status_msg: String::default(),
             command: String::default(),
             motion_count: 1,
-            b_wrap: 0,
-            v_cx: 0,
-            v_cy: 0,
-            terminal,
         })
     }
 }
@@ -127,17 +115,21 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         return Ok(());
     }
     editor_scroll(editor_config);
-    editor_config.terminal.clear()?;
-    editor_config.terminal.hide_cursor()?;
-    editor_config.terminal.set_cursor(0, 0)?;
+    execute!(stdout(), 
+        terminal::Clear(ClearType::All),
+        cursor::Hide,
+        cursor::MoveTo(0,0),
+
+    )?;
     let rowoff: usize = editor_config.rowoff.into();
     for y in 0..editor_config.screenrows as usize{
         // line numbering
-        if y >= editor_config.numrows.into() {break;}
         let lineno = (y + rowoff).to_string();
         let cy = usize::from(editor_config.cy);
         let lineoff = cy.abs_diff(y + rowoff).to_string();
-        if y + rowoff == editor_config.cy.into() {
+        if y >= editor_config.numrows.into() {
+            stdout().write_all(b"~\r\n")?;
+        } else if y + rowoff == editor_config.cy.into() {
             let spaces = " ".repeat(5 - lineno.len());
             stdout().execute(SetForegroundColor(crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }))?;
             stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
@@ -155,21 +147,22 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     }
     // write status line
     draw_status(editor_config)?;
-    editor_config.terminal.flush()?;
     let row: usize = editor_config.cy.into();
-    editor_config.terminal.set_cursor(editor_config.cx + 6, editor_config.cy - editor_config.rowoff)?;
+    execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     if usize::from(editor_config.cx) > editor_config.rows[row].data.len() {
-        editor_config.terminal.set_cursor(editor_config.rows[row].data.len().try_into().unwrap(), editor_config.cy)?;
+        execute!(stdout(), cursor::MoveTo(editor_config.rows[row].data.len().try_into().unwrap(), editor_config.cy))?;
         editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].data.len()).unwrap();
     }
-    editor_config.terminal.show_cursor()?;
+    execute!(stdout(), cursor::Show)?;
     Ok(())
 }
 
 fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
-    stdout().execute(SavePosition)?;
-    editor_config.terminal.set_cursor(0, editor_config.screenrows)?;
-    stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
+    execute!(stdout(),
+        SavePosition,
+        cursor::MoveTo(0, editor_config.screenrows),
+        SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}),
+    )?;
     stdout().write_all(editor_config.filename.as_bytes())?;
     if editor_config.dirty {
         stdout().write_all(b" [+] ")?;
@@ -183,12 +176,14 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
 }
 
 fn draw_command(editor_config: &mut EditorConfig) -> io::Result<()>{
-    editor_config.terminal.set_cursor(0, editor_config.screenrows + 1)?;
-    stdout().execute(Clear(ClearType::CurrentLine))?;
+    execute!(stdout(),
+        cursor::MoveTo(0, editor_config.screenrows + 1),
+        Clear(ClearType::CurrentLine),
+    )?;
     stdout().write_all(b":")?;
     stdout().write_all(editor_config.command.as_bytes())?;
     let cmdlen = editor_config.command.len() as u16;
-    editor_config.terminal.set_cursor(1 + cmdlen, editor_config.screenrows + 1)?;
+    stdout().execute(cursor::MoveTo(1 + cmdlen, editor_config.screenrows + 1))?;
     Ok(())
 }
 
@@ -308,8 +303,10 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                         }
                         ':' => {
                             editor_config.mode = Mode::COMMAND;
-                            stdout().execute(SavePosition)?;
-                            editor_config.terminal.set_cursor(1, editor_config.numrows)?;
+                            execute!(stdout(),
+                                SavePosition,
+                                cursor::MoveTo(1, editor_config.numrows),
+                            )?;
                         }
                         '0'..='9' => {
                             let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
