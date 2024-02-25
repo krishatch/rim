@@ -10,12 +10,13 @@ const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    
 const TAB_LENGTH: u16 = 4;
 const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 #[derive(Default, PartialEq, PartialOrd)]
+
 enum Mode {
     #[default]
-    NORMAL,
-    INSERT,
-    VISUAL,
-    COMMAND,
+    Normal,
+    Insert,
+    Visual, // Going to implement visual mode later
+    Command,
 }
 
 struct Erow {
@@ -87,10 +88,10 @@ fn main() -> io::Result<()> {
         if refresh {let _ = refresh_screen(&mut editor_config);} 
         
         refresh = match editor_config.mode {
-            Mode::NORMAL => handle_normal(&mut editor_config).unwrap(),
-            Mode::INSERT => handle_insert(&mut editor_config).unwrap(),
-            Mode::VISUAL => handle_visual(&mut editor_config).unwrap(),
-            Mode::COMMAND => handle_command(&mut editor_config).unwrap(),
+            Mode::Normal => handle_normal(&mut editor_config).unwrap(),
+            Mode::Insert => handle_insert(&mut editor_config).unwrap(),
+            Mode::Visual => handle_visual(&mut editor_config).unwrap(),
+            Mode::Command => handle_command(&mut editor_config).unwrap(),
         };
     }
 }
@@ -110,10 +111,6 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 }
 
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
-    if editor_config.mode == Mode::COMMAND {
-        draw_command(editor_config)?;
-        return Ok(());
-    }
     editor_scroll(editor_config);
     execute!(stdout(), 
         terminal::Clear(ClearType::All),
@@ -123,46 +120,48 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     )?;
     let rowoff: usize = editor_config.rowoff.into();
     for y in 0..editor_config.screenrows as usize{
-        // line numbering
-        let lineno = (y + rowoff).to_string();
-        let cy = usize::from(editor_config.cy);
-        let lineoff = cy.abs_diff(y + rowoff).to_string();
+        // If line is past file end
         if y >= editor_config.numrows.into() {
             stdout().write_all(b"~\r\n")?;
-        } else if y + rowoff == editor_config.cy.into() {
-            let spaces = " ".repeat(5 - lineno.len());
-            stdout().execute(SetForegroundColor(crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }))?;
-            stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
-            stdout().execute(ResetColor)?;
-            stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
-            stdout().write_all(b"\r\n")?; // Write a newline after each line
-        } else {
-            let spaces = " ".repeat(5 - lineoff.len());
-            stdout().execute(SetForegroundColor(crossterm::style::Color::Black))?;
-            stdout().write_all(format!("{}{} ", spaces, lineoff).as_bytes())?;
-            stdout().execute(ResetColor)?;
-            stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
-            stdout().write_all(b"\r\n")?; // Write a newline after each line
+            continue;
         }
+        let cy = usize::from(editor_config.cy);
+        let lineno = if y + rowoff == editor_config.cy.into() {(y + rowoff).to_string()} else {cy.abs_diff(y + rowoff).to_string()};
+        let foreground_color = if y + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
+        let spaces = " ".repeat(5 - lineno.len());
+        stdout().execute(SetForegroundColor(foreground_color))?;
+        stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
+        stdout().execute(ResetColor)?;
+        stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
+        stdout().write_all(b"\r\n")?; // Write a newline after each line
     }
     // write status line
     draw_status(editor_config)?;
+    if editor_config.mode == Mode::Command {draw_command(editor_config)?}
     let row: usize = editor_config.cy.into();
-    execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     if usize::from(editor_config.cx) > editor_config.rows[row].data.len() {
         execute!(stdout(), cursor::MoveTo(editor_config.rows[row].data.len().try_into().unwrap(), editor_config.cy))?;
         editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].data.len()).unwrap();
     }
+    execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     execute!(stdout(), cursor::Show)?;
     Ok(())
 }
 
 fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
+    let (mode_color, mode_string) = match editor_config.mode {
+        Mode::Normal => (crossterm::style::Color::Blue, "NORMAL"),
+        Mode::Insert => (crossterm::style::Color::Green, "INSERT"),
+        Mode::Visual => (crossterm::style::Color::Magenta, "VISUAL"),
+        Mode::Command => (crossterm::style::Color::Yellow, "COMMAND"),
+    };
     execute!(stdout(),
         SavePosition,
         cursor::MoveTo(0, editor_config.screenrows),
-        SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}),
+        SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(mode_color)}),
     )?;
+    stdout().write_all(mode_string.as_bytes())?;
+    stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
     stdout().write_all(editor_config.filename.as_bytes())?;
     if editor_config.dirty {
         stdout().write_all(b" [+] ")?;
@@ -209,7 +208,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: String) -> io::Result
         insert_row(editor_config, editor_config.numrows, line.to_string());
     }
     if editor_config.numrows == 0 {insert_row(editor_config, 0, String::new())}
-    set_status_message(editor_config, format!("Number of rows: {}", editor_config.numrows))?;
+    // set_status_message(editor_config, format!("Number of rows: {}", editor_config.numrows))?;
     editor_config.dirty = false;
     editor_config.filename = filename;
     Ok(())
@@ -247,20 +246,23 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                         'a' => {
                             editor_config.cx += 1;
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::INSERT;
+                            editor_config.mode = Mode::Insert;
                         }
                         'A' => {
                             editor_config.cx = curr_row.data.len() as u16;
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::INSERT;
+                            editor_config.mode = Mode::Insert;
 
+                        }
+                        'G' => {
+                            editor_config.cy = editor_config.numrows - 1;
                         }
                         'h' => {
                             if editor_config.cx > 0 {editor_config.cx -= 1;}
                         }
                         'i' => {
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::INSERT;
+                            editor_config.mode = Mode::Insert;
                         }
                         'j' => {
                             if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
@@ -274,8 +276,9 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                         'o' => {
                             editor_config.cy += 1;
                             editor_config.rows.insert(editor_config.cy.into(), Erow::new());
+                            editor_config.numrows += 1;
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::INSERT;
+                            editor_config.mode = Mode::Insert;
                         }
                         'w' => {
                             let mut sep = false;
@@ -302,7 +305,7 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                             }
                         }
                         ':' => {
-                            editor_config.mode = Mode::COMMAND;
+                            editor_config.mode = Mode::Command;
                             execute!(stdout(),
                                 SavePosition,
                                 cursor::MoveTo(1, editor_config.numrows),
@@ -348,7 +351,7 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
             if key.code == KeyCode::Esc {
                 if editor_config.cx > 0 {editor_config.cx -= 1;}
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
-                editor_config.mode = Mode::NORMAL;
+                editor_config.mode = Mode::Normal;
             }
             if key.code == KeyCode::Enter {
                 insert_row(editor_config, editor_config.cy+1, String::new());
@@ -384,7 +387,7 @@ fn handle_visual(editor_config: &mut EditorConfig) -> io::Result<bool>{
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Esc {
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
-                editor_config.mode = Mode::NORMAL;
+                editor_config.mode = Mode::Normal;
             }
             editor_config.dirty = true;
             return Ok(true)
@@ -399,7 +402,7 @@ fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{
             if key.code == KeyCode::Esc {
                 editor_config.command = String::default();
                 stdout().execute(RestorePosition)?;
-                editor_config.mode = Mode::NORMAL;
+                editor_config.mode = Mode::Normal;
             }
             if let KeyCode::Char(c) = key.code {
                 editor_config.command.push(c);
@@ -411,6 +414,7 @@ fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 match editor_config.command.as_str() {
                     "w" => {
                         editor_save(editor_config)?;
+                        set_status_message(editor_config, format!("{} {}L written", editor_config.filename, editor_config.numrows))?;
                         stdout().execute(RestorePosition)?;
                     }
                     "q" => {
@@ -439,7 +443,7 @@ fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     }
                 }
                 editor_config.command = String::default();
-                editor_config.mode = Mode::NORMAL;
+                editor_config.mode = Mode::Normal;
             }
             return Ok(true)
         }
