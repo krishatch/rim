@@ -4,9 +4,12 @@ use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style
 
 
 const C_HL_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
+const C_HL_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
 const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    "break",
                          "continue",  "return",  "else",    "struct", "union",
                          "typedef",   "static",  "enum",    "class",  "case"];
+const C_HL_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
+                                "unsigned", "signed", "void"];
 const TAB_LENGTH: u16 = 4;
 const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 #[derive(Default, PartialEq, PartialOrd)]
@@ -21,14 +24,12 @@ enum Mode {
 
 struct Erow {
     data: String,
-    highlight: Vec<crossterm::style::Color>
 }
 
 impl Erow {
-    fn new() -> Erow {
+    fn new(s: String) -> Erow {
         Erow {
-            data: String::default(),
-            highlight: vec![],
+            data: s,
         }
     }
 }
@@ -111,6 +112,7 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 }
 
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
+    // set up terminal for writing to screen
     editor_scroll(editor_config);
     execute!(stdout(), 
         terminal::Clear(ClearType::All),
@@ -118,31 +120,53 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         cursor::MoveTo(0,0),
 
     )?;
-    let rowoff: usize = editor_config.rowoff.into();
+    let rowoff: usize = editor_config.rowoff as usize;
     for y in 0..editor_config.screenrows as usize{
         // If line is past file end
         if y >= editor_config.numrows.into() {
             stdout().write_all(b"~\r\n")?;
             continue;
         }
-        let cy = usize::from(editor_config.cy);
+        // line numbering
+        let cy = editor_config.cy as usize;
         let lineno = if y + rowoff == editor_config.cy.into() {(y + rowoff).to_string()} else {cy.abs_diff(y + rowoff).to_string()};
         let foreground_color = if y + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
         let spaces = " ".repeat(5 - lineno.len());
         stdout().execute(SetForegroundColor(foreground_color))?;
         stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
         stdout().execute(ResetColor)?;
-        stdout().write_all(editor_config.rows[y + rowoff].data.clone().as_bytes())?;
+
+        // syntax highlighting and line output
+        for token in editor_config.rows[y + rowoff].data.split_inclusive(SEPARATORS){
+            let token_text = &token[0..token.len() - 1];
+            let delimiter = token.chars().last().unwrap();
+            let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
+            if delimiter == '(' {textcolor = crossterm::style::Color::Blue}
+            if delimiter == '"' {textcolor = crossterm::style::Color::Yellow}
+            if C_HL_KEYWORDS.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
+            if C_HL_TYPES.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
+            if C_HL_PREPROCESS.contains(&token_text) {textcolor = crossterm::style::Color::Red}
+            stdout().execute(SetForegroundColor(textcolor))?;
+            stdout().write_fmt(format_args!("{token_text}"))?;
+            stdout().execute(ResetColor)?;
+            stdout().write_fmt(format_args!("{delimiter}"))?;
+        }
         stdout().write_all(b"\r\n")?; // Write a newline after each line
+        stdout().execute(ResetColor)?;
     }
-    // write status line
+
+    // write status line and command
     draw_status(editor_config)?;
     if editor_config.mode == Mode::Command {draw_command(editor_config)?}
-    let row: usize = editor_config.cy.into();
-    if usize::from(editor_config.cx) > editor_config.rows[row].data.len() {
-        execute!(stdout(), cursor::MoveTo(editor_config.rows[row].data.len().try_into().unwrap(), editor_config.cy))?;
-        editor_config.cx = <usize as TryInto<u16>>::try_into(editor_config.rows[row].data.len()).unwrap();
+
+    // Prevent cx from going past row length
+    let rowlen = editor_config.rows[editor_config.cy as usize].data.len() as u16;
+    if editor_config.cx > rowlen{
+        execute!(stdout(), cursor::MoveTo(rowlen , editor_config.cy))?;
+        editor_config.cx = rowlen;
     }
+
+    // Offset from line numbering
     execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     execute!(stdout(), cursor::Show)?;
     Ok(())
@@ -228,8 +252,7 @@ fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
 fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
     if at > editor_config.numrows {return;}
 
-    let mut new_row = Erow::new();
-    new_row.data = s;
+    let mut new_row = Erow::new(s);
     editor_config.rows.insert(at.into(), new_row);
     editor_config.numrows += 1;
     editor_config.dirty = true;
@@ -271,11 +294,11 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                             if editor_config.cy > 0 {editor_config.cy -= 1;}
                         }
                         'l' => {
-                            if usize::from(editor_config.cx) < curr_row.data.len() - 1 {editor_config.cx += 1;}
+                            if editor_config.cx < curr_row.data.len() as u16 {editor_config.cx += 1;}
                         }
                         'o' => {
                             editor_config.cy += 1;
-                            editor_config.rows.insert(editor_config.cy.into(), Erow::new());
+                            editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
                             editor_config.numrows += 1;
                             stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                             editor_config.mode = Mode::Insert;
