@@ -1,5 +1,5 @@
 use std::{env, fs, io::{self, stdout,  Write}, process::exit, time::{self, Duration, Instant}};
-use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
+use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
 
 
 // const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
@@ -39,12 +39,14 @@ enum Mode {
 
 struct Erow {
     data: String,
+    tabs: u16,
 }
 
 impl Erow {
     fn new(s: String) -> Erow {
         Erow {
             data: s,
+            tabs: 0,
         }
     }
 }
@@ -100,7 +102,10 @@ impl EditorConfig {
 fn main() -> io::Result<()> {
     /*** Set up terminal ***/
     enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
+    execute!(stdout(),
+        EnterAlternateScreen,
+        DisableLineWrap
+    )?;
     let mut editor_config = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut editor_config, args[1].clone()).unwrap();}
@@ -163,6 +168,11 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
         stdout().execute(ResetColor)?;
 
+        // Tabs
+        let spaces = editor_config.rows[y + rowoff].tabs * TAB_LENGTH;
+        stdout().write_all(" ".repeat(spaces as usize).as_bytes())?;
+        editor_config.cx += spaces;
+
         // syntax highlighting and line output
         let (keywords, types, preprocess) = match editor_config.filename.split('.').last().unwrap() {
             "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
@@ -201,6 +211,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         editor_config.cx = rowlen;
     }
 
+    let spaces = editor_config.rows[editor_config.cy as usize].tabs * TAB_LENGTH;
     // Offset from line numbering
     execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     execute!(stdout(), cursor::Show)?;
@@ -422,7 +433,7 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                 }
                 editor_config.motion_count = 1;
                 return Ok(true);
-            } 
+            }         
         }
     }
     Ok(false)
@@ -448,14 +459,19 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                         editor_config.rows[cy].data.insert(editor_config.cx.into(), ')');
                     }else if c == '[' {
                         editor_config.rows[cy].data.insert(editor_config.cx.into(), ']');
+                    } else if editor_config.cx < editor_config.rows[cy].data.len() as u16 && ((c == '}' && editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap() == '}') ||
+                    (c == ')' && editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap() == ')') ||
+                    (c == ']' && editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap() == ']')) {
+                        editor_config.rows[cy].data.remove(editor_config.cx as usize);
                     } else if c == 'j' {
                         editor_config.j_flag = true;
                     }
                 }
             } else if key.code == KeyCode::Tab {
-                let spaces = " ".repeat(TAB_LENGTH.into());
+                let spaces = " ".repeat(TAB_LENGTH as usize);
                 let cy: usize = editor_config.cy.into();
                 editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &spaces);
+                editor_config.rows[editor_config.cy as usize].tabs += 1;
                 editor_config.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
                 if editor_config.cx > 0 {editor_config.cx -= 1;}
@@ -471,15 +487,28 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     if split_right.is_empty(){
                         split_right = String::new(); 
                     }
+                    let tabs = editor_config.rows[editor_config.cy as usize].tabs;
+                    let mut spaces = " ".repeat((tabs * TAB_LENGTH) as usize);
                     editor_config.rows.remove(editor_config.cy as usize);
                     editor_config.numrows -= 1;
                     insert_row(editor_config, editor_config.cy, split_left.clone());
+                    editor_config.rows[editor_config.cy as usize].tabs = tabs;
+                    editor_config.rows[editor_config.cy as usize].data.insert_str(0, &spaces);
                     insert_row(editor_config, editor_config.cy + 1, split_right.clone());
+                    editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
+                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
                     if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
+                        spaces = " ".repeat(((tabs + 1) * TAB_LENGTH) as usize);
                         insert_row(editor_config, editor_config.cy + 1, String::new());
+                        editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs + 1;
+                        editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
                     }
                 } else {
+                    let tabs = editor_config.rows[editor_config.cy as usize].tabs;
+                    let spaces = " ".repeat((tabs * TAB_LENGTH) as usize);
                     insert_row(editor_config, editor_config.cy+1, String::new());
+                    editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
+                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
                 }
                 editor_config.cy += 1;
                 editor_config.cx = 0;
