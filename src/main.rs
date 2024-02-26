@@ -1,6 +1,5 @@
-use std::{env, fs, io::{self, stdout,  Write}, process::exit};
-use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand
-};
+use std::{env, fs, io::{self, stdout,  Write}, process::exit, time::{self, Duration, Instant}};
+use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
 
 
 const C_HL_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
@@ -12,8 +11,9 @@ const C_HL_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
                                 "unsigned", "signed", "void"];
 const TAB_LENGTH: u16 = 4;
 const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
-#[derive(Default, PartialEq, PartialOrd)]
 
+
+#[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
     #[default]
     Normal,
@@ -85,7 +85,10 @@ fn main() -> io::Result<()> {
     if args.len() >= 2 {editor_open(&mut editor_config, args[1].clone()).unwrap();}
 
     let mut refresh = true;
+    let mut start;
+    let mut end;
     loop {
+        start = Instant::now();
         if refresh {let _ = refresh_screen(&mut editor_config);} 
         
         refresh = match editor_config.mode {
@@ -94,6 +97,9 @@ fn main() -> io::Result<()> {
             Mode::Visual => handle_visual(&mut editor_config).unwrap(),
             Mode::Command => handle_command(&mut editor_config).unwrap(),
         };
+        end = Instant::now();
+        let frames = 1_f64 / (end - start).as_secs_f64();
+        //set_status_message(&mut editor_config, format!("FPS: {}", frames))?;
     }
 }
 
@@ -252,7 +258,7 @@ fn editor_save(editor_config: &mut EditorConfig) -> io::Result<()>{
 fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
     if at > editor_config.numrows {return;}
 
-    let mut new_row = Erow::new(s);
+    let new_row = Erow::new(s);
     editor_config.rows.insert(at.into(), new_row);
     editor_config.numrows += 1;
     editor_config.dirty = true;
@@ -359,29 +365,48 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
     if event::poll(std::time::Duration::from_millis(50))?{
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
-                stdout().write_all(&[c as u8])?;
                 let cy: usize = editor_config.cy.into();
                 editor_config.rows[cy].data.insert(editor_config.cx.into(), c);
                 editor_config.cx += 1;
-            }
-            if key.code == KeyCode::Tab {
+                if c == '{' {
+                    editor_config.rows[cy].data.insert(editor_config.cx.into(), '}');
+                }else if c == '(' {
+                    editor_config.rows[cy].data.insert(editor_config.cx.into(), ')');
+                }else if c == '[' {
+                    editor_config.rows[cy].data.insert(editor_config.cx.into(), ']');
+                }
+            } else if key.code == KeyCode::Tab {
                 let spaces = " ".repeat(TAB_LENGTH.into());
                 let cy: usize = editor_config.cy.into();
                 editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &spaces);
-                stdout().write_all(spaces.as_bytes())?;
                 editor_config.cx += TAB_LENGTH;
-            }
-            if key.code == KeyCode::Esc {
+            } else if key.code == KeyCode::Esc {
                 if editor_config.cx > 0 {editor_config.cx -= 1;}
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::Normal;
-            }
-            if key.code == KeyCode::Enter {
-                insert_row(editor_config, editor_config.cy+1, String::new());
+            } else if key.code == KeyCode::Enter {
+                if !editor_config.rows[editor_config.cy as usize].data.is_empty() {
+                    let mut split_left = String::from(&mut editor_config.rows[editor_config.cy as usize].data.clone()[0..editor_config.cx as usize]);
+                    if split_left.is_empty(){
+                        split_left = String::new(); 
+                    }
+                    let mut split_right = String::from(&mut editor_config.rows[editor_config.cy as usize].data.clone()[editor_config.cx as usize..]);
+                    if split_right.is_empty(){
+                        split_right = String::new(); 
+                    }
+                    editor_config.rows.remove(editor_config.cy as usize);
+                    editor_config.numrows -= 1;
+                    insert_row(editor_config, editor_config.cy, split_left.clone());
+                    insert_row(editor_config, editor_config.cy + 1, split_right.clone());
+                    if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
+                        insert_row(editor_config, editor_config.cy + 1, String::new());
+                    }
+                } else {
+                    insert_row(editor_config, editor_config.cy+1, String::new());
+                }
                 editor_config.cy += 1;
                 editor_config.cx = 0;
-            }
-            if key.code == KeyCode::Backspace {
+            } else if key.code == KeyCode::Backspace {
                 let cy: usize = editor_config.cy.into();
                 let len = editor_config.rows[cy].data.len() as u16;
                 if editor_config.cx <= len && editor_config.cx > 0{
