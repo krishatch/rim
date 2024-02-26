@@ -2,7 +2,7 @@ use std::{env, fs, io::{self, stdout,  Write}, process::exit, time::{self, Durat
 use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
 
 
-const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
+// const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
 const C_HL_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
 const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    "break",
                          "continue",  "return",  "else",    "struct", "union",
@@ -10,7 +10,7 @@ const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    
 const C_HL_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
                                 "unsigned", "signed", "void"];
 
-const RUST_EXTENSIONS: [&str; 1] = [".rs"];
+// const RUST_EXTENSIONS: [&str; 1] = [".rs"];
 const RUST_PREPROCESS: [&str; 1] = [".use"];
 const RUST_KEYWORDS: [&str; 51] = ["as", "break",  "const", "continue", "crate",  "else", "enum",
     "extern", "false",  "fn",       "for",      "if",     "impl",    "in",
@@ -65,6 +65,9 @@ struct EditorConfig {
     status_msg: String,
     command: String,
     motion_count: u16,
+    d_flag: bool,
+    c_flag: bool,
+    j_flag: bool,
 }
 
 impl EditorConfig {
@@ -87,6 +90,9 @@ impl EditorConfig {
             status_msg: String::default(),
             command: String::default(),
             motion_count: 1,
+            d_flag: false,
+            c_flag: false,
+            j_flag: false,
         })
     }
 }
@@ -144,7 +150,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     let rowoff: usize = editor_config.rowoff as usize;
     for y in 0..editor_config.screenrows as usize{
         // If line is past file end
-        if y >= editor_config.numrows.into() {
+        if y >= editor_config.numrows as usize {
             stdout().write_all(b"~\r\n")?;
             continue;
         }
@@ -163,8 +169,9 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             "c" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
             "cpp" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
             "h" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
-            _ => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
+            _ => (vec![], vec![], vec![]),
         };
+
         for token in editor_config.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             let token_text = &token[0..token.len() - 1];
             let delimiter = token.chars().last().unwrap();
@@ -219,7 +226,7 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
         stdout().write_all(b" [+] ")?;
     }
     stdout().execute(ResetColor)?;
-    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].data.len()).as_bytes())?;
+    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{} - Rowoff {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].data.len(), editor_config.rowoff).as_bytes())?;
     stdout().write_all(b"\r\n")?; // Write a newline after each line
     stdout().write_all(editor_config.status_msg.as_bytes())?;
     stdout().execute(RestorePosition)?;
@@ -292,87 +299,125 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
                 for _i in 0..editor_config.motion_count{
-                    let mut curr_row = &mut editor_config.rows[editor_config.cy as usize];
-                    match c {
-                        'a' => {
-                            editor_config.cx += 1;
-                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::Insert;
-                        }
-                        'A' => {
-                            editor_config.cx = curr_row.data.len() as u16;
-                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::Insert;
-
-                        }
-                        'G' => {
-                            editor_config.cy = editor_config.numrows - 1;
-                        }
-                        'h' => {
-                            if editor_config.cx > 0 {editor_config.cx -= 1;}
-                        }
-                        'i' => {
-                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::Insert;
-                        }
-                        'j' => {
-                            if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
-                        }
-                        'k' => {
-                            if editor_config.cy > 0 {editor_config.cy -= 1;}
-                        }
-                        'l' => {
-                            if editor_config.cx < curr_row.data.len() as u16 {editor_config.cx += 1;}
-                        }
-                        'o' => {
-                            editor_config.cy += 1;
-                            editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
-                            editor_config.numrows += 1;
-                            stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                            editor_config.mode = Mode::Insert;
-                        }
-                        'w' => {
-                            let mut sep = false;
-                            while !sep {
-                                if editor_config.cx as usize == curr_row.data.len() && editor_config.cy == editor_config.numrows - 1 {
-                                   sep = true; 
-                                } else if editor_config.cx as usize == curr_row.data.len() {
+                    let mut cy = editor_config.cy as usize;
+                    if editor_config.d_flag {
+                        match c {
+                            'd' => {
+                                if editor_config.numrows == 1 {
+                                    editor_config.rows[0].data = String::new();
                                     editor_config.cx = 0;
-                                    editor_config.cy += 1;
-                                    curr_row = &mut editor_config.rows[editor_config.cy as usize];
-                                    if editor_config.cx  < curr_row.data.len() as u16 && !(SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap())){
-                                        sep = true;
+                                    editor_config.cy = 0;
+                                } else {
+                                    editor_config.rows.remove(editor_config.cy as usize);
+                                    editor_config.numrows -= 1;
+                                    if editor_config.cy == editor_config.numrows {editor_config.cy -= 1}
+                                }
+                            }
+                            'w' => {
+                                // Do later
+                            }
+                            _ => {}
+                        }
+                        editor_config.d_flag = false;
+                    } else if editor_config.c_flag{
+                        match c {
+                            'w' => {
+                                // do later
+                            }
+                            'e' => {
+                                // do later
+                            }
+                            _ => {}
+                        }
+                        editor_config.c_flag = false;
+                    } else {
+                        match c {
+                            'a' => {
+                                editor_config.cx += 1;
+                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                                editor_config.mode = Mode::Insert;
+                            }
+                            'A' => {
+                                editor_config.cx = editor_config.rows[cy].data.len() as u16;
+                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                                editor_config.mode = Mode::Insert;
 
+                            }
+                            'c' => {
+                                editor_config.c_flag = true;
+                            }
+                            'd' => {
+                                editor_config.d_flag = true;
+                            }
+                            'G' => {
+                                editor_config.cy = editor_config.numrows - 1;
+                            }
+                            'h' => {
+                                if editor_config.cx > 0 {editor_config.cx -= 1;}
+                            }
+                            'i' => {
+                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                                editor_config.mode = Mode::Insert;
+                            }
+                            'j' => {
+                                if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
+                            }
+                            'k' => {
+                                if editor_config.cy > 0 {editor_config.cy -= 1;}
+                            }
+                            'l' => {
+                                if editor_config.cx < editor_config.rows[cy].data.len() as u16 {editor_config.cx += 1;}
+                            }
+                            'o' => {
+                                editor_config.cy += 1;
+                                editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
+                                editor_config.numrows += 1;
+                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                                editor_config.mode = Mode::Insert;
+                            }
+                            'w' => {
+                                let mut sep = false;
+                                while !sep {
+                                    if editor_config.cx as usize == editor_config.rows[cy].data.len() && editor_config.cy == editor_config.numrows - 1 {
+                                       sep = true; 
+                                    } else if editor_config.cx as usize == editor_config.rows[cy].data.len() {
+                                        editor_config.cx = 0;
+                                        editor_config.cy += 1;
+                                        cy = editor_config.cy as usize;
+                                        if editor_config.cx  < editor_config.rows[cy].data.len() as u16 && !(SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap())){
+                                            sep = true;
+
+                                        }
+                                    } else if SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap()) {
+                                        while editor_config.cx < editor_config.rows[cy].data.len() as u16 && SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap()) {
+                                            editor_config.cx += 1;
+                                        }
+                                        sep = true;
                                     }
-                                } else if SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap()) {
-                                    while editor_config.cx < curr_row.data.len() as u16 && SEPARATORS.contains(&curr_row.data.chars().nth(editor_config.cx as usize).unwrap()) {
+                                    else {
                                         editor_config.cx += 1;
                                     }
-                                    sep = true;
-                                }
-                                else {
-                                    editor_config.cx += 1;
                                 }
                             }
-                        }
-                        ':' => {
-                            editor_config.mode = Mode::Command;
-                            execute!(stdout(),
-                                SavePosition,
-                                cursor::MoveTo(1, editor_config.numrows),
-                            )?;
-                        }
-                        '0'..='9' => {
-                            let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
-                            if editor_config.motion_count == 1 {editor_config.motion_count = num;}
-                            else{
-                                editor_config.motion_count *= 10;
-                                editor_config.motion_count += num;
+                            ':' => {
+                                editor_config.mode = Mode::Command;
+                                execute!(stdout(),
+                                    SavePosition,
+                                    cursor::MoveTo(1, editor_config.numrows),
+                                )?;
                             }
-                            set_status_message(editor_config, editor_config.motion_count.to_string())?;
-                            return Ok(true);
+                            '0'..='9' => {
+                                let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
+                                if editor_config.motion_count == 1 {editor_config.motion_count = num;}
+                                else{
+                                    editor_config.motion_count *= 10;
+                                    editor_config.motion_count += num;
+                                }
+                                set_status_message(editor_config, editor_config.motion_count.to_string())?;
+                                return Ok(true);
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 editor_config.motion_count = 1;
@@ -387,15 +432,25 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
     if event::poll(std::time::Duration::from_millis(50))?{
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
-                let cy: usize = editor_config.cy.into();
-                editor_config.rows[cy].data.insert(editor_config.cx.into(), c);
-                editor_config.cx += 1;
-                if c == '{' {
-                    editor_config.rows[cy].data.insert(editor_config.cx.into(), '}');
-                }else if c == '(' {
-                    editor_config.rows[cy].data.insert(editor_config.cx.into(), ')');
-                }else if c == '[' {
-                    editor_config.rows[cy].data.insert(editor_config.cx.into(), ']');
+                let cy: usize = editor_config.cy as usize;
+                if editor_config.j_flag && c == 'k' {
+                    editor_config.rows[cy].data.remove((editor_config.cx - 1) as usize);
+                    editor_config.cx -= 1;
+                    editor_config.j_flag = false;
+                    stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                    editor_config.mode = Mode::Normal;
+                } else {
+                    editor_config.rows[cy].data.insert(editor_config.cx.into(), c);
+                    editor_config.cx += 1;
+                    if c == '{' {
+                        editor_config.rows[cy].data.insert(editor_config.cx.into(), '}');
+                    }else if c == '(' {
+                        editor_config.rows[cy].data.insert(editor_config.cx.into(), ')');
+                    }else if c == '[' {
+                        editor_config.rows[cy].data.insert(editor_config.cx.into(), ']');
+                    } else if c == 'j' {
+                        editor_config.j_flag = true;
+                    }
                 }
             } else if key.code == KeyCode::Tab {
                 let spaces = " ".repeat(TAB_LENGTH.into());
