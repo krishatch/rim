@@ -2,13 +2,28 @@ use std::{env, fs, io::{self, stdout,  Write}, process::exit, time::{self, Durat
 use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
 
 
-const C_HL_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
+const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
 const C_HL_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
 const C_HL_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    "break",
                          "continue",  "return",  "else",    "struct", "union",
                          "typedef",   "static",  "enum",    "class",  "case"];
 const C_HL_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
                                 "unsigned", "signed", "void"];
+
+const RUST_EXTENSIONS: [&str; 1] = [".rs"];
+const RUST_PREPROCESS: [&str; 1] = [".use"];
+const RUST_KEYWORDS: [&str; 51] = ["as", "break",  "const", "continue", "crate",  "else", "enum",
+    "extern", "false",  "fn",       "for",      "if",     "impl",    "in",
+    "let",    "loop",   "match",    "mod",      "move",   "mut",     "pub",
+    "ref",    "return", "self",     "Self",     "static", "struct",  "super",
+    "trait",  "true",   "type",     "unsafe",   "use",    "where",   "while",
+    "async",  "await",  "dyn",      "abstract", "become", "box",     "do",
+    "final",  "macro",  "override", "priv",     "typeof", "unsized", "virtual",
+    "yield",  "try"];
+const RUST_TYPES: [&str; 16] = ["i8", "i16", "i32",     "i64",     "i128",  "isize",  "u8",
+    "u16",   "u32",   "u64",     "u128",    "usize",  "f32",    "f64",
+    "bool",  "char"];
+
 const TAB_LENGTH: u16 = 4;
 const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 
@@ -143,15 +158,22 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         stdout().execute(ResetColor)?;
 
         // syntax highlighting and line output
+        let (keywords, types, preprocess) = match editor_config.filename.split('.').last().unwrap() {
+            "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
+            "c" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
+            "cpp" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
+            "h" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
+            _ => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
+        };
         for token in editor_config.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             let token_text = &token[0..token.len() - 1];
             let delimiter = token.chars().last().unwrap();
             let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
             if delimiter == '(' {textcolor = crossterm::style::Color::Blue}
             if delimiter == '"' {textcolor = crossterm::style::Color::Yellow}
-            if C_HL_KEYWORDS.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
-            if C_HL_TYPES.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
-            if C_HL_PREPROCESS.contains(&token_text) {textcolor = crossterm::style::Color::Red}
+            if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
+            if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
+            if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
             stdout().execute(SetForegroundColor(textcolor))?;
             stdout().write_fmt(format_args!("{token_text}"))?;
             stdout().execute(ResetColor)?;
