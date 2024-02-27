@@ -471,13 +471,13 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 let tab_str = " ".repeat(TAB_LENGTH as usize);
                 let cy: usize = editor_config.cy.into();
                 editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &tab_str);
-                editor_config.rows[editor_config.cy as usize].tabs += 1;
                 editor_config.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
                 if editor_config.cx > 0 {editor_config.cx -= 1;}
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::Normal;
             } else if key.code == KeyCode::Enter {
+                let mut indention;
                 if !editor_config.rows[editor_config.cy as usize].data.is_empty() {
                     let mut split_left = String::from(&mut editor_config.rows[editor_config.cy as usize].data.clone()[0..editor_config.cx as usize]);
                     if split_left.is_empty(){
@@ -488,33 +488,38 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                         split_right = String::new(); 
                     }
                     set_status_message(editor_config, "hi".to_string())?;
-                    let tabs = editor_config.rows[editor_config.cy as usize].tabs;
-                    let mut tab_str = "\t".repeat(tabs as usize);
+                    let mut spaces = 0;
+                    while spaces < editor_config.rows[editor_config.cy as usize].data.len() as u16 && editor_config.rows[editor_config.cy as usize].data.chars().nth(spaces as usize).unwrap() == ' '{
+                        spaces += 1;
+                    }
+                    let mut tab_str = " ".repeat(spaces as usize);
                     editor_config.rows.remove(editor_config.cy as usize);
                     editor_config.numrows -= 1;
                     insert_row(editor_config, editor_config.cy, split_left.clone());
-                    editor_config.rows[editor_config.cy as usize].tabs = tabs;
-                    editor_config.rows[editor_config.cy as usize].data.insert_str(0, &tab_str);
                     insert_row(editor_config, editor_config.cy + 1, split_right.clone());
-                    editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
                     editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
+                    indention = if spaces > 0 {spaces + 1} else {0};
                     if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
                         set_status_message(editor_config, "hey".to_string())?;
-                        tab_str = "\t".repeat((tabs + 1) as usize);
+                        let tab_str = " ".repeat(spaces as usize + 4_usize);
                         insert_row(editor_config, editor_config.cy + 1, String::new());
-                        editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs + 1;
                         editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
+                        indention = if spaces > 0 {spaces + 5} else {5};
                     }
                 } else {
-                    let tabs = editor_config.rows[editor_config.cy as usize].tabs;
-                    let tab_str = "\t".repeat(tabs as usize);
+                    let mut spaces = 0;
+                    while spaces < editor_config.rows[editor_config.cy as usize].data.len() as u16 && editor_config.rows[editor_config.cy as usize].data.chars().nth(spaces as usize).unwrap() == ' '{
+                        spaces += 1;
+                    }
+                    editor_config.cx = spaces + 1;
+                    let tab_str = " ".repeat(spaces as usize);
                     set_status_message(editor_config, "hello".to_string())?;
                     insert_row(editor_config, editor_config.cy+1, String::new());
-                    editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
                     editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
+                    indention = if spaces > 0 {spaces + 1} else {0};
                 }
+                editor_config.cx = indention;
                 editor_config.cy += 1;
-                editor_config.cx = 0;
             } else if key.code == KeyCode::Backspace {
                 let cy: usize = editor_config.cy.into();
                 let len = editor_config.rows[cy].data.len() as u16;
