@@ -1,5 +1,10 @@
-use std::{env, fs, io::{self, stdout,  Write}, process::exit, time::{self, Duration, Instant}};
+use std::{fmt, env, fs, io::{self, stdout,  Write}, process::exit};
 use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
+
+/*** some other packages thay may be useful ***/
+/*
+    * std::time::{self, Duration, Instant}
+*/
 
 
 // const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
@@ -27,7 +32,32 @@ const RUST_TYPES: [&str; 16] = ["i8", "i16", "i32",     "i64",     "i128",  "isi
 const TAB_LENGTH: u16 = 4;
 const SEPARATORS: [char; 11] = ['\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 
+#[derive(Debug)]
+enum MyError {
+    Io(std::io::Error),
+    ParseInt(std::num::ParseIntError),
+    // Add other error types as needed
+}
 
+impl fmt::Display for MyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MyError::Io(ref err) => write!(f, "IO error: {}", err),
+            MyError::ParseInt(ref err) => write!(f, "Parse error: {}", err),
+            // Handle other cases accordingly
+        }
+    }
+}
+
+impl std::error::Error for MyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match *self {
+            MyError::Io(ref err) => Some(err),
+            MyError::ParseInt(ref err) => Some(err),
+            // Handle other cases accordingly
+        }
+    }
+}
 #[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
     #[default]
@@ -111,10 +141,7 @@ fn main() -> io::Result<()> {
     if args.len() >= 2 {editor_open(&mut editor_config, args[1].clone()).unwrap();}
 
     let mut refresh = true;
-    let mut start;
-    let mut end;
     loop {
-        start = Instant::now();
         if refresh {let _ = refresh_screen(&mut editor_config);} 
         
         refresh = match editor_config.mode {
@@ -123,9 +150,6 @@ fn main() -> io::Result<()> {
             Mode::Visual => handle_visual(&mut editor_config).unwrap(),
             Mode::Command => handle_command(&mut editor_config).unwrap(),
         };
-        end = Instant::now();
-        let frames = 1_f64 / (end - start).as_secs_f64();
-        //set_status_message(&mut editor_config, format!("FPS: {}", frames))?;
     }
 }
 
@@ -168,11 +192,6 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         stdout().write_all(format!("{}{} ", tab_str, lineno).as_bytes())?;
         stdout().execute(ResetColor)?;
 
-        // // Tabs
-        // let tabs = editor_config.rows[y + rowoff].tabs;
-        // stdout().write_all("\t".repeat(tabs as usize).as_bytes())?;
-        // editor_config.cx += tabs * TAB_LENGTH;
-
         // syntax highlighting and line output
         let (keywords, types, preprocess) = match editor_config.filename.split('.').last().unwrap() {
             "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
@@ -211,7 +230,6 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         editor_config.cx = rowlen;
     }
 
-    let tab_str = editor_config.rows[editor_config.cy as usize].tabs * TAB_LENGTH;
     // Offset from line numbering
     execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     execute!(stdout(), cursor::Show)?;
@@ -386,6 +404,9 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                                 stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                                 editor_config.mode = Mode::Insert;
                             }
+                            'v' => {
+                                editor_config.mode = Mode::Visual;
+                            }
                             'w' => {
                                 let mut sep = false;
                                 while !sep {
@@ -439,6 +460,36 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
     Ok(false)
 }
 
+fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
+    let current_line = editor_config.rows[editor_config.cy as usize].data.clone();
+    let (split_left, split_right) = current_line.split_at(editor_config.cx as usize);
+
+    let leading_spaces = current_line.chars().take_while(|c| *c == ' ').count();
+    
+    let indent_str = " ".repeat(leading_spaces);
+
+    // Simplified line splitting and insertion
+    editor_config.rows.remove(editor_config.cy as usize);
+    editor_config.numrows -= 1;
+    insert_row(editor_config, editor_config.cy, split_left.to_string());
+    insert_row(editor_config, editor_config.cy + 1, format!("{}{}", indent_str, split_right));
+
+    // Calculate indentation for cursor positioning
+    let additional_indent = if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
+        // Handle specific closing characters with additional indentation
+        let extra_indent_str = " ".repeat(4); // Adjust the number of spaces as needed
+        insert_row(editor_config, editor_config.cy + 1, extra_indent_str.clone());
+        editor_config.rows[editor_config.cy as usize + 1].data.insert_str(0, &extra_indent_str);
+        TAB_LENGTH // Adjust according to your indentation strategy
+    } else {
+        0
+    };
+
+    editor_config.cx = leading_spaces as u16 + additional_indent;
+    editor_config.cy += 1;
+    Ok(())
+}
+
 fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
     if event::poll(std::time::Duration::from_millis(50))?{
         if let Event::Key(key) = event::read()? {
@@ -477,49 +528,7 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 editor_config.mode = Mode::Normal;
             } else if key.code == KeyCode::Enter {
-                let mut indention;
-                if !editor_config.rows[editor_config.cy as usize].data.is_empty() {
-                    let mut split_left = String::from(&mut editor_config.rows[editor_config.cy as usize].data.clone()[0..editor_config.cx as usize]);
-                    if split_left.is_empty(){
-                        split_left = String::new(); 
-                    }
-                    let mut split_right = String::from(&mut editor_config.rows[editor_config.cy as usize].data.clone()[editor_config.cx as usize..]);
-                    if split_right.is_empty(){
-                        split_right = String::new(); 
-                    }
-                    set_status_message(editor_config, "hi".to_string())?;
-                    let mut spaces = 0;
-                    while spaces < editor_config.rows[editor_config.cy as usize].data.len() as u16 && editor_config.rows[editor_config.cy as usize].data.chars().nth(spaces as usize).unwrap() == ' '{
-                        spaces += 1;
-                    }
-                    let mut tab_str = " ".repeat(spaces as usize);
-                    editor_config.rows.remove(editor_config.cy as usize);
-                    editor_config.numrows -= 1;
-                    insert_row(editor_config, editor_config.cy, split_left.clone());
-                    insert_row(editor_config, editor_config.cy + 1, split_right.clone());
-                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
-                    indention = if spaces > 0 {spaces + 1} else {0};
-                    if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
-                        set_status_message(editor_config, "hey".to_string())?;
-                        let tab_str = " ".repeat(spaces as usize + 4_usize);
-                        insert_row(editor_config, editor_config.cy + 1, String::new());
-                        editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
-                        indention = if spaces > 0 {spaces + 5} else {5};
-                    }
-                } else {
-                    let mut spaces = 0;
-                    while spaces < editor_config.rows[editor_config.cy as usize].data.len() as u16 && editor_config.rows[editor_config.cy as usize].data.chars().nth(spaces as usize).unwrap() == ' '{
-                        spaces += 1;
-                    }
-                    editor_config.cx = spaces + 1;
-                    let tab_str = " ".repeat(spaces as usize);
-                    set_status_message(editor_config, "hello".to_string())?;
-                    insert_row(editor_config, editor_config.cy+1, String::new());
-                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
-                    indention = if spaces > 0 {spaces + 1} else {0};
-                }
-                editor_config.cx = indention;
-                editor_config.cy += 1;
+                let _ = auto_indent(editor_config);
             } else if key.code == KeyCode::Backspace {
                 let cy: usize = editor_config.cy.into();
                 let len = editor_config.rows[cy].data.len() as u16;
