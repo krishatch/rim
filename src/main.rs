@@ -25,7 +25,7 @@ const RUST_TYPES: [&str; 16] = ["i8", "i16", "i32",     "i64",     "i128",  "isi
     "bool",  "char"];
 
 const TAB_LENGTH: u16 = 4;
-const SEPARATORS: [char; 10] = [' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
+const SEPARATORS: [char; 11] = ['\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 
 
 #[derive(Default, PartialEq, PartialOrd)]
@@ -163,15 +163,15 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         let cy = editor_config.cy as usize;
         let lineno = if y + rowoff == editor_config.cy.into() {(y + rowoff).to_string()} else {cy.abs_diff(y + rowoff).to_string()};
         let foreground_color = if y + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
-        let spaces = " ".repeat(5 - lineno.len());
+        let tab_str = " ".repeat(5 - lineno.len());
         stdout().execute(SetForegroundColor(foreground_color))?;
-        stdout().write_all(format!("{}{} ", spaces, lineno).as_bytes())?;
+        stdout().write_all(format!("{}{} ", tab_str, lineno).as_bytes())?;
         stdout().execute(ResetColor)?;
 
-        // Tabs
-        let spaces = editor_config.rows[y + rowoff].tabs * TAB_LENGTH;
-        stdout().write_all(" ".repeat(spaces as usize).as_bytes())?;
-        editor_config.cx += spaces;
+        // // Tabs
+        // let tabs = editor_config.rows[y + rowoff].tabs;
+        // stdout().write_all("\t".repeat(tabs as usize).as_bytes())?;
+        // editor_config.cx += tabs * TAB_LENGTH;
 
         // syntax highlighting and line output
         let (keywords, types, preprocess) = match editor_config.filename.split('.').last().unwrap() {
@@ -211,7 +211,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         editor_config.cx = rowlen;
     }
 
-    let spaces = editor_config.rows[editor_config.cy as usize].tabs * TAB_LENGTH;
+    let tab_str = editor_config.rows[editor_config.cy as usize].tabs * TAB_LENGTH;
     // Offset from line numbering
     execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
     execute!(stdout(), cursor::Show)?;
@@ -468,9 +468,9 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     }
                 }
             } else if key.code == KeyCode::Tab {
-                let spaces = " ".repeat(TAB_LENGTH as usize);
+                let tab_str = " ".repeat(TAB_LENGTH as usize);
                 let cy: usize = editor_config.cy.into();
-                editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &spaces);
+                editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &tab_str);
                 editor_config.rows[editor_config.cy as usize].tabs += 1;
                 editor_config.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
@@ -487,28 +487,31 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     if split_right.is_empty(){
                         split_right = String::new(); 
                     }
+                    set_status_message(editor_config, "hi".to_string())?;
                     let tabs = editor_config.rows[editor_config.cy as usize].tabs;
-                    let mut spaces = " ".repeat((tabs * TAB_LENGTH) as usize);
+                    let mut tab_str = "\t".repeat(tabs as usize);
                     editor_config.rows.remove(editor_config.cy as usize);
                     editor_config.numrows -= 1;
                     insert_row(editor_config, editor_config.cy, split_left.clone());
                     editor_config.rows[editor_config.cy as usize].tabs = tabs;
-                    editor_config.rows[editor_config.cy as usize].data.insert_str(0, &spaces);
+                    editor_config.rows[editor_config.cy as usize].data.insert_str(0, &tab_str);
                     insert_row(editor_config, editor_config.cy + 1, split_right.clone());
                     editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
-                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
+                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
                     if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
-                        spaces = " ".repeat(((tabs + 1) * TAB_LENGTH) as usize);
+                        set_status_message(editor_config, "hey".to_string())?;
+                        tab_str = "\t".repeat((tabs + 1) as usize);
                         insert_row(editor_config, editor_config.cy + 1, String::new());
                         editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs + 1;
-                        editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
+                        editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
                     }
                 } else {
                     let tabs = editor_config.rows[editor_config.cy as usize].tabs;
-                    let spaces = " ".repeat((tabs * TAB_LENGTH) as usize);
+                    let tab_str = "\t".repeat(tabs as usize);
+                    set_status_message(editor_config, "hello".to_string())?;
                     insert_row(editor_config, editor_config.cy+1, String::new());
                     editor_config.rows[(editor_config.cy + 1) as usize].tabs = tabs;
-                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &spaces);
+                    editor_config.rows[(editor_config.cy + 1) as usize].data.insert_str(0, &tab_str);
                 }
                 editor_config.cy += 1;
                 editor_config.cx = 0;
