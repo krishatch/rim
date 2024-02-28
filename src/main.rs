@@ -1,5 +1,11 @@
 use std::{fmt, env, fs, io::{self, stdout,  Write}, process::exit};
-use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, style::{ResetColor, SetColors, SetForegroundColor}, terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, ExecutableCommand};
+use crossterm::{cursor::{self, *}, 
+    event::{self, Event, KeyCode}, 
+    queue,
+    execute, 
+    style::{ResetColor, SetColors, SetForegroundColor}, 
+    terminal::{self, disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, 
+    ExecutableCommand};
 
 /*** some other packages thay may be useful ***/
 /*
@@ -167,10 +173,14 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
   }
 }
 
+fn process_line(line: &mut str) {
+
+}
+
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
     editor_scroll(editor_config);
-    execute!(stdout(), 
+    queue!(stdout(), 
         terminal::Clear(ClearType::All),
         cursor::Hide,
         cursor::MoveTo(0,0),
@@ -180,7 +190,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     for y in 0..editor_config.screenrows as usize{
         // If line is past file end
         if y >= editor_config.numrows as usize {
-            stdout().write_all(b"~\r\n")?;
+            queue!(stdout(), crossterm::style::Print("~\r\n"))?;
             continue;
         }
         // line numbering
@@ -188,9 +198,12 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         let lineno = if y + rowoff == editor_config.cy.into() {(y + rowoff).to_string()} else {cy.abs_diff(y + rowoff).to_string()};
         let foreground_color = if y + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
         let tab_str = " ".repeat(5 - lineno.len());
-        stdout().execute(SetForegroundColor(foreground_color))?;
-        stdout().write_all(format!("{}{} ", tab_str, lineno).as_bytes())?;
-        stdout().execute(ResetColor)?;
+        queue!(stdout(), 
+            SetForegroundColor(foreground_color),
+            crossterm::style::Print(format!("{}{} ", tab_str, lineno)),
+            ResetColor
+        )?;
+        
 
         // syntax highlighting and line output
         let (keywords, types, preprocess) = match editor_config.filename.split('.').last().unwrap() {
@@ -210,13 +223,17 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
             if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
             if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
-            stdout().execute(SetForegroundColor(textcolor))?;
-            stdout().write_fmt(format_args!("{token_text}"))?;
-            stdout().execute(ResetColor)?;
-            stdout().write_fmt(format_args!("{delimiter}"))?;
+            queue!(stdout(),
+                SetForegroundColor(textcolor),
+                crossterm::style::Print(token_text.to_string()),
+                ResetColor,
+                crossterm::style::Print(delimiter.to_string())
+            )?;
         }
-        stdout().write_all(b"\r\n")?; // Write a newline after each line
-        stdout().execute(ResetColor)?;
+        queue!(stdout(),
+            crossterm::style::Print("\r\n"),
+            ResetColor
+        )?;
     }
 
     // write status line and command
@@ -226,13 +243,18 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     // Prevent cx from going past row length
     let rowlen = editor_config.rows[editor_config.cy as usize].data.len() as u16;
     if editor_config.cx > rowlen{
-        execute!(stdout(), cursor::MoveTo(rowlen , editor_config.cy))?;
+        queue!(stdout(), cursor::MoveTo(rowlen , editor_config.cy))?;
         editor_config.cx = rowlen;
     }
 
     // Offset from line numbering
-    execute!(stdout(), cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff))?;
-    execute!(stdout(), cursor::Show)?;
+    queue!(stdout(), 
+        cursor::MoveTo(editor_config.cx + 6, editor_config.cy - editor_config.rowoff),
+        cursor::Show,
+    )?;
+
+    // Flush the queue to do the refresh
+    stdout().flush()?;
     Ok(())
 }
 
@@ -243,34 +265,35 @@ fn draw_status(editor_config: &mut EditorConfig) -> io::Result<()> {
         Mode::Visual => (crossterm::style::Color::Magenta, "VISUAL"),
         Mode::Command => (crossterm::style::Color::Yellow, "COMMAND"),
     };
-    execute!(stdout(),
+    queue!(stdout(),
         SavePosition,
         cursor::MoveTo(0, editor_config.screenrows),
         SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(mode_color)}),
+        crossterm::style::Print(mode_string),
+        SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}),
+        crossterm::style::Print(editor_config.filename.clone()),
     )?;
-    stdout().write_all(mode_string.as_bytes())?;
-    stdout().execute(SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(crossterm::style::Color::White)}))?;
-    stdout().write_all(editor_config.filename.as_bytes())?;
     if editor_config.dirty {
-        stdout().write_all(b" [+] ")?;
+        queue!(stdout(), crossterm::style::Print(" [+] "))?;
     }
-    stdout().execute(ResetColor)?;
-    stdout().write_all(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{} - Rowoff {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].data.len(), editor_config.rowoff).as_bytes())?;
-    stdout().write_all(b"\r\n")?; // Write a newline after each line
-    stdout().write_all(editor_config.status_msg.as_bytes())?;
-    stdout().execute(RestorePosition)?;
+    queue!(stdout(),
+        ResetColor,
+        crossterm::style::Print(format!(" Row: {}/{} - Screen {}/{} - Col: {}/{} - Rowoff {}", editor_config.cy, editor_config.numrows, editor_config.cy - editor_config.rowoff, editor_config.screenrows, editor_config.cx, editor_config.rows[editor_config.cy as usize].data.len(), editor_config.rowoff)),
+        crossterm::style::Print("\r\n"),
+        crossterm::style::Print(editor_config.status_msg.clone()),
+        RestorePosition
+    )?;
     Ok(())
 }
 
 fn draw_command(editor_config: &mut EditorConfig) -> io::Result<()>{
-    execute!(stdout(),
+    queue!(stdout(),
         cursor::MoveTo(0, editor_config.screenrows + 1),
         Clear(ClearType::CurrentLine),
+        crossterm::style::Print(":"),
+        crossterm::style::Print(editor_config.command.clone()),
+        cursor::MoveTo(1 + editor_config.command.len() as u16, editor_config.screenrows + 1)
     )?;
-    stdout().write_all(b":")?;
-    stdout().write_all(editor_config.command.as_bytes())?;
-    let cmdlen = editor_config.command.len() as u16;
-    stdout().execute(cursor::MoveTo(1 + cmdlen, editor_config.screenrows + 1))?;
     Ok(())
 }
 
