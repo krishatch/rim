@@ -1,1 +1,1 @@
-Look into queue to batch commands.
+rim is a vim-like text editor written in Rust.
