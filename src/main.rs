@@ -22,6 +22,7 @@ const C_HL_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
                                 "unsigned", "signed", "void"];
 
 // const RUST_EXTENSIONS: [&str; 1] = [".rs"];
+const RS_DECLARATIONS: [&str; 2] = ["let", "mut"];
 const RUST_PREPROCESS: [&str; 1] = [".use"];
 const RUST_KEYWORDS: [&str; 51] = ["as", "break",  "const", "continue", "crate",  "else", "enum",
     "extern", "false",  "fn",       "for",      "if",     "impl",    "in",
@@ -106,6 +107,7 @@ struct EditorConfig {
     d_flag: bool,
     c_flag: bool,
     j_flag: bool,
+    vars: Vec<String>,
 }
 
 impl EditorConfig {
@@ -131,6 +133,7 @@ impl EditorConfig {
             d_flag: false,
             c_flag: false,
             j_flag: false,
+            vars: vec![],
         })
     }
 }
@@ -214,12 +217,18 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             _ => (vec![], vec![], vec![]),
         };
 
+        let mut declaration = false;
         for token in editor_config.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             let token_text = &token[0..token.len() - 1];
             let delimiter = token.chars().last().unwrap();
             let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
             if delimiter == '(' {textcolor = crossterm::style::Color::Blue}
             if delimiter == '"' {textcolor = crossterm::style::Color::Yellow}
+            if declaration {
+            if !editor_config.vars.contains(&token_text.to_string()) {editor_config.vars.append(Vec![token_text.to_string()].as_mut())};
+                textcolor = crossterm::style::Color::Rgb { r: 0xf4, g: 0xb6, b: 0xc2 };
+                declaration = false;
+            }
             if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
             if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
             if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
@@ -229,6 +238,10 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
                 ResetColor,
                 crossterm::style::Print(delimiter.to_string())
             )?;
+            if RS_DECLARATIONS.contains(&token_text){
+                declaration = true;
+
+            }
         }
         queue!(stdout(),
             crossterm::style::Print("\r\n"),
