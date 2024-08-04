@@ -1,4 +1,4 @@
-use std::{fmt, env, fs, io::{self, stdout,  Write}, process::exit};
+use std::{env, fmt, fs, io::{self, stdout,  Write}, process::exit};
 use crossterm::{cursor::{self, *}, 
     event::{self, Event, KeyCode}, 
     queue,
@@ -8,10 +8,6 @@ use crossterm::{cursor::{self, *},
     ExecutableCommand};
 
 /*** some other packages thay may be useful ***/
-/*
-    * std::time::{self, Duration, Instant}
-*/
-
 
 // const C_EXTENSIONS: [&str; 3] = [".c", ".h", ".cpp"];
 const C_HL_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
@@ -100,6 +96,7 @@ struct EditorConfig {
     numrows: u16,
     rows: Vec<Erow>,
     dirty: bool,
+    dirty_rows: Vec<u16>,
     filename: String, 
     status_msg: String,
     command: String,
@@ -126,6 +123,7 @@ impl EditorConfig {
             numrows: 0,
             rows: vec![],
             dirty: false,
+            dirty_rows: Vec::from_iter(0..rows - 2), // mark all rows dirty at beginning
             filename: String::default(),
             status_msg: String::default(),
             command: String::default(),
@@ -162,10 +160,22 @@ fn main() -> io::Result<()> {
     }
 }
 
-fn editor_scroll(editor_config: &mut EditorConfig) {
+fn editor_scroll(editor_config: &mut EditorConfig) -> io::Result<()> {
   if editor_config.cy < editor_config.rowoff {
+    let scroll_diff = editor_config.rowoff - editor_config.cy;
+    queue!(stdout(),
+        terminal::ScrollDown(scroll_diff)
+    )?;
+    editor_config.dirty_rows.extend(0..scroll_diff);
     editor_config.rowoff = editor_config.cy;
   } else if editor_config.cy >= editor_config.rowoff + editor_config.screenrows {
+    let mut scroll_diff = editor_config.cy - (editor_config.rowoff + editor_config.screenrows);
+    scroll_diff+=1;
+    // set_status_message(editor_config, format!("{}", scroll_diff));
+    queue!(stdout(),
+        terminal::ScrollUp(scroll_diff)
+    )?;
+    editor_config.dirty_rows.extend((editor_config.screenrows - scroll_diff)..editor_config.screenrows);
     editor_config.rowoff = editor_config.cy - editor_config.screenrows + 1;
   }
 
@@ -174,32 +184,32 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
   } else if editor_config.rx >= editor_config.coloff + editor_config.screencols {
     editor_config.coloff = editor_config.rx - editor_config.screencols + 1;
   }
-}
-
-fn process_line(line: &mut str) {
-
+    Ok(())
 }
 
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
-    editor_scroll(editor_config);
+    let _ = editor_scroll(editor_config);
     queue!(stdout(), 
-        terminal::Clear(ClearType::All),
         cursor::Hide,
-        cursor::MoveTo(0,0),
-
+        cursor::MoveTo(0, editor_config.numrows + 2),
+        terminal::Clear(ClearType::CurrentLine),
     )?;
-    let rowoff: usize = editor_config.rowoff as usize;
-    for y in 0..editor_config.screenrows as usize{
+    let rowoff: usize = editor_config.rowoff.into();
+    for y in editor_config.dirty_rows.clone() {
+        queue!(stdout(), 
+            cursor::MoveTo(0,y),
+            terminal::Clear(ClearType::CurrentLine),
+        )?;
         // If line is past file end
-        if y >= editor_config.numrows as usize {
+        if y >= editor_config.numrows {
             queue!(stdout(), crossterm::style::Print("~\r\n"))?;
             continue;
         }
         // line numbering
         let cy = editor_config.cy as usize;
-        let lineno = if y + rowoff == editor_config.cy.into() {(y + rowoff).to_string()} else {cy.abs_diff(y + rowoff).to_string()};
-        let foreground_color = if y + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
+        let lineno = if (y as usize) + rowoff == editor_config.cy.into() {((y as usize) + rowoff).to_string()} else {cy.abs_diff((y as usize) + rowoff).to_string()};
+        let foreground_color = if (y as usize) + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
         let tab_str = " ".repeat(5 - lineno.len());
         queue!(stdout(), 
             SetForegroundColor(foreground_color),
@@ -218,14 +228,14 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         };
 
         let mut declaration = false;
-        for token in editor_config.rows[y + rowoff].data.split_inclusive(SEPARATORS){
+        for token in editor_config.rows[(y as usize) + rowoff].data.split_inclusive(SEPARATORS){
             let token_text = &token[0..token.len() - 1];
             let delimiter = token.chars().last().unwrap();
             let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
             if delimiter == '(' {textcolor = crossterm::style::Color::Blue}
             if delimiter == '"' {textcolor = crossterm::style::Color::Yellow}
             if declaration {
-            if !editor_config.vars.contains(&token_text.to_string()) {editor_config.vars.append(Vec![token_text.to_string()].as_mut())};
+            if !editor_config.vars.contains(&token_text.to_string()) {editor_config.vars.append(vec![token_text.to_string()].as_mut())};
                 textcolor = crossterm::style::Color::Rgb { r: 0xf4, g: 0xb6, b: 0xc2 };
                 declaration = false;
             }
@@ -266,6 +276,8 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         cursor::Show,
     )?;
 
+    // Set dirty rows to empty
+    editor_config.dirty_rows = vec![];
     // Flush the queue to do the refresh
     stdout().flush()?;
     Ok(())
@@ -360,7 +372,7 @@ fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
 
 /*** Keyboard Event Handling ***/
 fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
-    if event::poll(std::time::Duration::from_millis(50))?{
+    if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
                 for _i in 0..editor_config.motion_count{
@@ -527,7 +539,7 @@ fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
 }
 
 fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
-    if event::poll(std::time::Duration::from_millis(50))?{
+    if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             if let KeyCode::Char(c) = key.code {
                 let cy: usize = editor_config.cy as usize;
@@ -590,7 +602,7 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
 }
 
 fn handle_visual(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
-    if event::poll(std::time::Duration::from_millis(50))?{
+    if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Esc {
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
@@ -604,7 +616,7 @@ fn handle_visual(editor_config: &mut EditorConfig) -> io::Result<bool>{
 }
 
 fn handle_command(editor_config: &mut EditorConfig) -> io::Result<bool>{ 
-    if event::poll(std::time::Duration::from_millis(50))?{
+    if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Esc {
                 editor_config.command = String::default();
