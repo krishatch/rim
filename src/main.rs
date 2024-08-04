@@ -171,7 +171,6 @@ fn editor_scroll(editor_config: &mut EditorConfig) -> io::Result<()> {
   } else if editor_config.cy >= editor_config.rowoff + editor_config.screenrows {
     let mut scroll_diff = editor_config.cy - (editor_config.rowoff + editor_config.screenrows);
     scroll_diff+=1;
-    // set_status_message(editor_config, format!("{}", scroll_diff));
     queue!(stdout(),
         terminal::ScrollUp(scroll_diff)
     )?;
@@ -190,6 +189,7 @@ fn editor_scroll(editor_config: &mut EditorConfig) -> io::Result<()> {
 fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
     let _ = editor_scroll(editor_config);
+    editor_config.dirty_rows.push(editor_config.cy - editor_config.rowoff);
     queue!(stdout(), 
         cursor::Hide,
         cursor::MoveTo(0, editor_config.numrows + 2),
@@ -208,8 +208,11 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         }
         // line numbering
         let cy = editor_config.cy as usize;
-        let lineno = if (y as usize) + rowoff == editor_config.cy.into() {((y as usize) + rowoff).to_string()} else {cy.abs_diff((y as usize) + rowoff).to_string()};
-        let foreground_color = if (y as usize) + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
+        // Relative line numbering first attempt. doesnt work now
+        // let lineno = if (y as usize) + rowoff == editor_config.cy.into() {((y as usize) + rowoff).to_string()} else {cy.abs_diff((y as usize) + rowoff).to_string()};
+        let lineno = (y as usize + rowoff).to_string();
+        // let foreground_color = if (y as usize) + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
+        let foreground_color = crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb };
         let tab_str = " ".repeat(5 - lineno.len());
         queue!(stdout(), 
             SetForegroundColor(foreground_color),
@@ -224,7 +227,10 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             "c" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
             "cpp" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
             "h" => (C_HL_KEYWORDS.to_vec(), C_HL_TYPES.to_vec(), C_HL_PREPROCESS.to_vec()),
-            _ => (vec![], vec![], vec![]),
+            _ => {
+                let _ = set_status_message(editor_config, "Filetype not supported for syntax higlighting!".to_string());
+                (vec![], vec![], vec![])
+            },
         };
 
         let mut declaration = false;
@@ -374,6 +380,8 @@ fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
 fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
+            // mark current row dirty (if we leave this row we rand to make lineno dark!)
+            editor_config.dirty_rows.push(editor_config.cy - editor_config.rowoff);
             if let KeyCode::Char(c) = key.code {
                 for _i in 0..editor_config.motion_count{
                     let mut cy = editor_config.cy as usize;
