@@ -100,11 +100,10 @@ struct EditorConfig {
     filename: String, 
     status_msg: String,
     command: String,
+    motion: String,
     motion_count: u16,
-    d_flag: bool,
-    c_flag: bool,
-    j_flag: bool,
     vars: Vec<String>,
+    j_flag: bool,
 }
 
 impl EditorConfig {
@@ -127,11 +126,10 @@ impl EditorConfig {
             filename: String::default(),
             status_msg: String::default(),
             command: String::default(),
+            motion: String::default(),
             motion_count: 1,
-            d_flag: false,
-            c_flag: false,
-            j_flag: false,
             vars: vec![],
+            j_flag: false,
         })
     }
 }
@@ -162,7 +160,8 @@ fn main() -> io::Result<()> {
 
 fn editor_scroll(editor_config: &mut EditorConfig) -> io::Result<()> {
   if editor_config.cy < editor_config.rowoff {
-    let scroll_diff = editor_config.rowoff - editor_config.cy;
+    let mut scroll_diff = editor_config.rowoff - editor_config.cy;
+    scroll_diff = if scroll_diff > editor_config.screenrows {editor_config.screenrows} else {scroll_diff};
     queue!(stdout(),
         terminal::ScrollDown(scroll_diff)
     )?;
@@ -171,6 +170,7 @@ fn editor_scroll(editor_config: &mut EditorConfig) -> io::Result<()> {
   } else if editor_config.cy >= editor_config.rowoff + editor_config.screenrows {
     let mut scroll_diff = editor_config.cy - (editor_config.rowoff + editor_config.screenrows);
     scroll_diff+=1;
+    scroll_diff = if scroll_diff > editor_config.screenrows {editor_config.screenrows} else {scroll_diff};
     queue!(stdout(),
         terminal::ScrollUp(scroll_diff)
     )?;
@@ -376,144 +376,121 @@ fn insert_row(editor_config: &mut EditorConfig, at: u16, s: String) {
     editor_config.dirty = true;
 }
 
+/*** Motions ***/
+
+fn colon(editor_config: &mut EditorConfig){
+    editor_config.mode = Mode::Command;
+    let _ = execute!(stdout(),
+        SavePosition,
+        cursor::MoveTo(1, editor_config.numrows),
+    );
+}
+
+fn ua_motion(editor_config: &mut EditorConfig){
+    editor_config.cx = editor_config.rows[editor_config.cy as usize].data.len() as u16;
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    editor_config.mode = Mode::Insert;
+}
+
+fn a_motion(editor_config: &mut EditorConfig) {
+    editor_config.cx += 1;
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    editor_config.mode = Mode::Insert;
+}
+
+fn o_motion(editor_config: &mut EditorConfig){
+    editor_config.cy += 1;
+    editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
+    editor_config.numrows += 1;
+    // set all rows after as dirty
+    editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    editor_config.mode = Mode::Insert;
+}
+
+fn w_motion(editor_config: &mut EditorConfig){
+    let mut sep = false;
+    while !sep {
+        if editor_config.cx as usize == editor_config.rows[editor_config.cy as usize].data.len() && editor_config.cy == editor_config.numrows - 1 {
+           sep = true; 
+        } else if editor_config.cx as usize == editor_config.rows[editor_config.cy as usize].data.len() {
+            editor_config.cx = 0;
+            editor_config.cy += 1;
+            if editor_config.cx  < editor_config.rows[editor_config.cy as usize].data.len() as u16 && !(SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap())){
+                sep = true;
+
+            }
+        } else if SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap()) {
+            while editor_config.cx < editor_config.rows[editor_config.cy as usize].data.len() as u16 && SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap()) {
+                editor_config.cx += 1;
+            }
+            sep = true;
+        }
+        else {
+            editor_config.cx += 1;
+        }
+    }
+
+}
+
 /*** Keyboard Event Handling ***/
 fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
+    let mut motion_done = false;
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             // mark current row dirty (if we leave this row we rand to make lineno dark!)
             editor_config.dirty_rows.push(editor_config.cy - editor_config.rowoff);
             if let KeyCode::Char(c) = key.code {
-                for _i in 0..editor_config.motion_count{
-                    let mut cy = editor_config.cy as usize;
-                    if editor_config.d_flag {
-                        match c {
-                            'd' => {
-                                if editor_config.numrows == 1 {
-                                    editor_config.rows[0].data = String::new();
-                                    editor_config.cx = 0;
-                                    editor_config.cy = 0;
-                                } else {
-                                    editor_config.rows.remove(editor_config.cy as usize);
-                                    editor_config.numrows -= 1;
-                                    if editor_config.cy == editor_config.numrows {editor_config.cy -= 1}
-                                }
-                            }
-                            'w' => {
-                                // Do later
-                            }
-                            _ => {}
-                        }
-                        editor_config.d_flag = false;
-                    } else if editor_config.c_flag{
-                        match c {
-                            'w' => {
-                                // do later
-                            }
-                            'e' => {
-                                // do later
-                            }
-                            _ => {}
-                        }
-                        editor_config.c_flag = false;
-                    } else {
-                        match c {
-                            'a' => {
-                                editor_config.cx += 1;
-                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                                editor_config.mode = Mode::Insert;
-                            }
-                            'A' => {
-                                editor_config.cx = editor_config.rows[cy].data.len() as u16;
-                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                                editor_config.mode = Mode::Insert;
-
-                            }
-                            'c' => {
-                                editor_config.c_flag = true;
-                            }
-                            'd' => {
-                                editor_config.d_flag = true;
-                            }
-                            'G' => {
-                                editor_config.cy = editor_config.numrows - 1;
-                            }
-                            'h' => {
-                                if editor_config.cx > 0 {editor_config.cx -= 1;}
-                            }
-                            'i' => {
-                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                                editor_config.mode = Mode::Insert;
-                            }
-                            'j' => {
-                                if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;}
-                            }
-                            'k' => {
-                                if editor_config.cy > 0 {editor_config.cy -= 1;}
-                            }
-                            'l' => {
-                                if editor_config.cx < editor_config.rows[cy].data.len() as u16 {editor_config.cx += 1;}
-                            }
-                            'o' => {
-                                editor_config.cy += 1;
-                                editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
-                                editor_config.numrows += 1;
-                                stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                                editor_config.mode = Mode::Insert;
-                            }
-                            'v' => {
-                                editor_config.mode = Mode::Visual;
-                            }
-                            'w' => {
-                                let mut sep = false;
-                                while !sep {
-                                    if editor_config.cx as usize == editor_config.rows[cy].data.len() && editor_config.cy == editor_config.numrows - 1 {
-                                       sep = true; 
-                                    } else if editor_config.cx as usize == editor_config.rows[cy].data.len() {
-                                        editor_config.cx = 0;
-                                        editor_config.cy += 1;
-                                        cy = editor_config.cy as usize;
-                                        if editor_config.cx  < editor_config.rows[cy].data.len() as u16 && !(SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap())){
-                                            sep = true;
-
-                                        }
-                                    } else if SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap()) {
-                                        while editor_config.cx < editor_config.rows[cy].data.len() as u16 && SEPARATORS.contains(&editor_config.rows[cy].data.chars().nth(editor_config.cx as usize).unwrap()) {
-                                            editor_config.cx += 1;
-                                        }
-                                        sep = true;
-                                    }
-                                    else {
-                                        editor_config.cx += 1;
-                                    }
-                                }
-                            }
-                            ':' => {
-                                editor_config.mode = Mode::Command;
-                                execute!(stdout(),
-                                    SavePosition,
-                                    cursor::MoveTo(1, editor_config.numrows),
-                                )?;
-                            }
-                            '0'..='9' => {
-                                let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
-                                if editor_config.motion_count == 1 {editor_config.motion_count = num;}
-                                else{
-                                    editor_config.motion_count *= 10;
-                                    editor_config.motion_count += num;
-                                }
-                                set_status_message(editor_config, editor_config.motion_count.to_string())?;
-                                return Ok(true);
-                            }
-                            _ => {}
+                motion_done = true;
+                editor_config.motion.push(c);
+                match editor_config.motion.as_str() {
+                    "dd" =>{
+                        if editor_config.numrows == 1 {
+                            editor_config.rows[0].data = String::new();
+                            editor_config.cx = 0;
+                            editor_config.cy = 0;
+                        } else {
+                            editor_config.rows.remove(editor_config.cy as usize);
+                            editor_config.numrows -= 1;
+                            if editor_config.cy == editor_config.numrows {editor_config.cy -= 1}
                         }
                     }
+                    "a" => a_motion(editor_config),
+                    "A" => ua_motion(editor_config),
+                    "G" => editor_config.cy = editor_config.numrows - 1,
+                    "h" => if editor_config.cx > 0 {editor_config.cx -= 1;},
+                    "i" => {
+                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
+                        editor_config.mode = Mode::Insert;
+                    }
+                    "j" => if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;},
+                    "k" => if editor_config.cy > 0 {editor_config.cy -= 1;},
+                    "l" => if editor_config.cx < editor_config.rows[editor_config.cy as usize].data.len() as u16 {editor_config.cx += 1;},
+                    "o" => o_motion(editor_config),
+                    "v" => editor_config.mode = Mode::Visual,
+                    "w" => w_motion(editor_config),
+                    ":" => colon(editor_config),
+                    // "0"..="9" => {
+                    //     let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
+                    //     if editor_config.motion_count == 1 {editor_config.motion_count = num;}
+                    //     else{
+                    //         editor_config.motion_count *= 10;
+                    //         editor_config.motion_count += num;
+                    //     }
+                    //     set_status_message(editor_config, editor_config.motion_count.to_string())?;
+                    //     return Ok(true);
+                    // }
+                    _ => {
+                        if editor_config.motion.len() > 3 {editor_config.motion = String::default()};
+                        let _ = set_status_message(editor_config, editor_config.motion.clone());
+                        motion_done = false;
+                    }
                 }
-                editor_config.motion_count = 1;
-                return Ok(true);
-            }         
+            }
         }
     }
-    Ok(false)
+    if motion_done {editor_config.motion = String::default()};
+    Ok(motion_done)
 }
 
 fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
