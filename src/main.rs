@@ -430,7 +430,20 @@ fn w_motion(editor_config: &mut EditorConfig){
             editor_config.cx += 1;
         }
     }
+}
 
+fn dd_motion(editor_config: &mut EditorConfig){
+    if editor_config.numrows == 1 {
+        editor_config.rows[0].data = String::new();
+        editor_config.cx = 0;
+        editor_config.cy = 0;
+    } else {
+        editor_config.rows.remove(editor_config.cy as usize);
+        editor_config.numrows -= 1;
+        if editor_config.cy == editor_config.numrows {editor_config.cy -= 1}
+    }
+    // set all rows after as dirty
+    editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
 }
 
 /*** Keyboard Event Handling ***/
@@ -444,17 +457,7 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                 motion_done = true;
                 editor_config.motion.push(c);
                 match editor_config.motion.as_str() {
-                    "dd" =>{
-                        if editor_config.numrows == 1 {
-                            editor_config.rows[0].data = String::new();
-                            editor_config.cx = 0;
-                            editor_config.cy = 0;
-                        } else {
-                            editor_config.rows.remove(editor_config.cy as usize);
-                            editor_config.numrows -= 1;
-                            if editor_config.cy == editor_config.numrows {editor_config.cy -= 1}
-                        }
-                    }
+                    "dd" => dd_motion(editor_config),
                     "a" => a_motion(editor_config),
                     "A" => ua_motion(editor_config),
                     "G" => editor_config.cy = editor_config.numrows - 1,
