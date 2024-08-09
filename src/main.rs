@@ -256,7 +256,6 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
             )?;
             if RS_DECLARATIONS.contains(&token_text){
                 declaration = true;
-
             }
         }
         queue!(stdout(),
@@ -520,6 +519,11 @@ fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
     } else {
         0
     };
+    // set current row to dirty bc we will set cy to next row
+    editor_config.dirty_rows.push(editor_config.cy - editor_config.rowoff);
+
+    // set all rows below current as dirty because they will shift
+    editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff + 2)..editor_config.screenrows);
 
     editor_config.cx = leading_spaces as u16 + additional_indent;
     editor_config.cy += 1;
@@ -577,6 +581,9 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                     let new_cx = editor_config.rows[cy - 1].data.len() as u16;
                     editor_config.rows[cy - 1].data.push_str(&cur_str);
                     editor_config.rows.remove(cy);
+
+                    //set all rows below as dirty because they need to shift up
+                    editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
                     editor_config.cy -= 1;
                     editor_config.cx = new_cx;
                     editor_config.numrows -= 1;
