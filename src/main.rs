@@ -399,8 +399,25 @@ fn a_motion(editor_config: &mut EditorConfig) {
 }
 
 fn o_motion(editor_config: &mut EditorConfig){
+    // Insert a new row with the same indention as the current row
+    let indents = editor_config.rows[editor_config.cy as usize].indent;
+    let leading_spaces = " ".repeat((indents * TAB_LENGTH) as usize);
     editor_config.cy += 1;
-    editor_config.rows.insert(editor_config.cy as usize, Erow::new(String::new()));
+    editor_config.rows.insert(editor_config.cy as usize, Erow::new(leading_spaces));
+    editor_config.rows[editor_config.cy as usize].indent = indents;
+    editor_config.numrows += 1;
+    // set all rows after as dirty
+    editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    editor_config.mode = Mode::Insert;
+}
+
+fn uo_motion(editor_config: &mut EditorConfig){
+    // Insert a new row with the same indention as the current row
+    let indents = editor_config.rows[editor_config.cy as usize].indent;
+    let leading_spaces = " ".repeat((indents * TAB_LENGTH) as usize);
+    editor_config.rows.insert(editor_config.cy as usize, Erow::new(leading_spaces));
+    editor_config.rows[editor_config.cy as usize].indent = indents;
     editor_config.numrows += 1;
     // set all rows after as dirty
     editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
@@ -409,6 +426,30 @@ fn o_motion(editor_config: &mut EditorConfig){
 }
 
 fn w_motion(editor_config: &mut EditorConfig){
+    let mut sep = false;
+    while !sep {
+        if editor_config.cx as usize == editor_config.rows[editor_config.cy as usize].data.len() && editor_config.cy == editor_config.numrows - 1 {
+           sep = true; 
+        } else if editor_config.cx as usize == editor_config.rows[editor_config.cy as usize].data.len() {
+            editor_config.cx = 0;
+            editor_config.cy += 1;
+            if editor_config.cx  < editor_config.rows[editor_config.cy as usize].data.len() as u16 && !(SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap())){
+                sep = true;
+
+            }
+        } else if SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap()) {
+            while editor_config.cx < editor_config.rows[editor_config.cy as usize].data.len() as u16 && SEPARATORS.contains(&editor_config.rows[editor_config.cy as usize].data.chars().nth(editor_config.cx as usize).unwrap()) {
+                editor_config.cx += 1;
+            }
+            sep = true;
+        }
+        else {
+            editor_config.cx += 1;
+        }
+    }
+}
+
+fn b_motion(editor_config: &mut EditorConfig){
     let mut sep = false;
     while !sep {
         if editor_config.cx as usize == editor_config.rows[editor_config.cy as usize].data.len() && editor_config.cy == editor_config.numrows - 1 {
@@ -446,6 +487,12 @@ fn dd_motion(editor_config: &mut EditorConfig){
     editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff)..editor_config.screenrows);
 }
 
+fn ui_motion(editor_config: &mut EditorConfig){
+    editor_config.cx = editor_config.rows[editor_config.cy as usize].indent * TAB_LENGTH;
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    editor_config.mode = Mode::Insert;
+}
+
 /*** Keyboard Event Handling ***/
 fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
     let mut motion_done = false;
@@ -466,10 +513,12 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
                         stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
                         editor_config.mode = Mode::Insert;
                     }
+                    "I" => ui_motion(editor_config),
                     "j" => if editor_config.cy < editor_config.numrows - 1 {editor_config.cy += 1;},
                     "k" => if editor_config.cy > 0 {editor_config.cy -= 1;},
                     "l" => if editor_config.cx < editor_config.rows[editor_config.cy as usize].data.len() as u16 {editor_config.cx += 1;},
                     "o" => o_motion(editor_config),
+                    "O" => uo_motion(editor_config),
                     "v" => editor_config.mode = Mode::Visual,
                     "w" => w_motion(editor_config),
                     ":" => colon(editor_config),
