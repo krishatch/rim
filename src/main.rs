@@ -450,14 +450,40 @@ fn w_motion(ec: &mut EditorConfig){
 }
 
 fn b_motion(ec: &mut EditorConfig){
+    // WIP
     let mut sep = false;
+    if ec.cx as usize >= ec.rows[ec.cy as usize].data.len() {ec.cx = (ec.rows[ec.cy as usize].data.len() - 1) as u16}
+    if ec.cx <= 2 {ec.cx = 0} else {ec.cx -= 2}
+    while !sep{
+        if ec.cx == 0 && ec.cy == 0 {
+            sep = true;
+        } else if ec.cx <= ec.rows[ec.cy as usize].indent * TAB_LENGTH{
+
+        }
+        // If we are on a separator, we are done and move cursor to the start of the next token
+        if SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()){
+            ec.cx += 1;
+            sep = true;
+        } else{
+            // Move cx back (if we can)
+            if ec.cx == 0 && ec.cy == 0 {
+                sep = true
+            } else if (ec.cx == 0 && ec.cy > 0) || ec.cx < (ec.rows[ec.cy as usize].indent * TAB_LENGTH) as u16 {
+                ec.cy -= 1;
+                ec.cx = ec.rows[ec.cy as usize].data.len() as u16;
+            } else {
+                ec.cx -= 1;
+            }
+        }
+
+    }
     while !sep {
-        if ec.cx as usize == ec.rows[ec.cy as usize].data.len() && ec.cy == ec.numrows - 1 {
+        if ec.cx as usize == ec.rows[ec.cy as usize].data.len() && ec.cy == 0{
            sep = true; 
-        } else if ec.cx as usize == ec.rows[ec.cy as usize].data.len() {
+        } else if ec.cx as usize == 0 {
             ec.cx = 0;
-            ec.cy += 1;
-            if ec.cx  < ec.rows[ec.cy as usize].data.len() as u16 && !(SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap())){
+            ec.cy -= 1;
+            if ec.cx < ec.rows[ec.cy as usize].data.len() as u16 && !(SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap())){
                 sep = true;
 
             }
@@ -507,6 +533,7 @@ fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
                     "dd" => dd_motion(ec),
                     "a" => a_motion(ec),
                     "A" => ua_motion(ec),
+                    "b" => b_motion(ec),
                     "G" => ec.cy = ec.numrows - 1,
                     "h" => if ec.cx > 0 {ec.cx -= 1;},
                     "i" => {
