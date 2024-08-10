@@ -72,14 +72,14 @@ enum Mode {
 
 struct Erow {
     data: String,
-    tabs: u16,
+    indent: u16,
 }
 
 impl Erow {
     fn new(s: String) -> Erow {
         Erow {
             data: s,
-            tabs: 0,
+            indent: 0,
         }
     }
 }
@@ -195,6 +195,7 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         cursor::MoveTo(0, editor_config.numrows + 2),
         terminal::Clear(ClearType::CurrentLine),
     )?;
+
     let rowoff: usize = editor_config.rowoff.into();
     for y in editor_config.dirty_rows.clone() {
         queue!(stdout(), 
@@ -213,10 +214,10 @@ fn refresh_screen(editor_config: &mut EditorConfig) -> io::Result<()>{
         let lineno = (y as usize + rowoff).to_string();
         // let foreground_color = if (y as usize) + rowoff == editor_config.cy.into() {crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb }} else {crossterm::style::Color::Black};
         let foreground_color = crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb };
-        let tab_str = " ".repeat(5 - lineno.len());
+        let lineno_spaces = " ".repeat(5 - lineno.len());
         queue!(stdout(), 
             SetForegroundColor(foreground_color),
-            crossterm::style::Print(format!("{}{} ", tab_str, lineno)),
+            crossterm::style::Print(format!("{}{} ", lineno_spaces, lineno)),
             ResetColor
         )?;
         
@@ -496,25 +497,29 @@ fn handle_normal(editor_config: &mut EditorConfig) -> io::Result<bool>  {
 }
 
 fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
-    let current_line = editor_config.rows[editor_config.cy as usize].data.clone();
+    let cy = editor_config.cy as usize;
+    let current_line = editor_config.rows[cy].data.clone();
+    let indents = editor_config.rows[cy].indent;
     let (split_left, split_right) = current_line.split_at(editor_config.cx as usize);
-
-    let leading_spaces = current_line.chars().take_while(|c| *c == ' ').count();
     
-    let indent_str = " ".repeat(leading_spaces);
+    let leading_spaces = " ".repeat((TAB_LENGTH * editor_config.rows[cy].indent) as usize);
 
     // Simplified line splitting and insertion
     editor_config.rows.remove(editor_config.cy as usize);
     editor_config.numrows -= 1;
     insert_row(editor_config, editor_config.cy, split_left.to_string());
-    insert_row(editor_config, editor_config.cy + 1, format!("{}{}", indent_str, split_right));
+    insert_row(editor_config, editor_config.cy + 1, format!("{}{}", leading_spaces, split_right));
+
+    // set indent levels
+    editor_config.rows[cy].indent = indents;
+    editor_config.rows[cy + 1].indent = indents;
 
     // Calculate indentation for cursor positioning
     let additional_indent = if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
         // Handle specific closing characters with additional indentation
-        let extra_indent_str = " ".repeat(4); // Adjust the number of spaces as needed
+        let extra_indent_str = " ".repeat((TAB_LENGTH * (indents + 1)) as usize); // Adjust the number of spaces as needed
         insert_row(editor_config, editor_config.cy + 1, extra_indent_str.clone());
-        editor_config.rows[editor_config.cy as usize + 1].data.insert_str(0, &extra_indent_str);
+        editor_config.rows[cy + 1].indent = indents + 1;
         TAB_LENGTH // Adjust according to your indentation strategy
     } else {
         0
@@ -525,7 +530,7 @@ fn auto_indent(editor_config: &mut EditorConfig) -> Result<(), MyError> {
     // set all rows below current as dirty because they will shift
     editor_config.dirty_rows.extend((editor_config.cy - editor_config.rowoff + 2)..editor_config.screenrows);
 
-    editor_config.cx = leading_spaces as u16 + additional_indent;
+    editor_config.cx = leading_spaces.len() as u16 + additional_indent;
     editor_config.cy += 1;
     Ok(())
 }
@@ -561,6 +566,9 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
             } else if key.code == KeyCode::Tab {
                 let tab_str = " ".repeat(TAB_LENGTH as usize);
                 let cy: usize = editor_config.cy.into();
+                if editor_config.cx == editor_config.rows[cy].indent * TAB_LENGTH {
+                    editor_config.rows[cy].indent += 1;
+                }
                 editor_config.rows[cy].data.insert_str(editor_config.cx.into(), &tab_str);
                 editor_config.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
@@ -573,6 +581,12 @@ fn handle_insert(editor_config: &mut EditorConfig) -> io::Result<bool>{
                 let cy: usize = editor_config.cy.into();
                 let len = editor_config.rows[cy].data.len() as u16;
                 if editor_config.cx <= len && editor_config.cx > 0{
+                    // If we are changing the indent level, denote this
+                    if editor_config.cx == editor_config.rows[cy].indent * TAB_LENGTH{
+                        editor_config.rows[cy].indent -= 1;
+                    }
+
+                    // Remove char from data
                     editor_config.rows[cy].data.remove((editor_config.cx - 1).into());
                     editor_config.cx -= 1;
                 } else if editor_config.cx == 0 && editor_config.cy > 0 {
