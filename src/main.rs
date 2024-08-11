@@ -519,9 +519,43 @@ fn ui_motion(ec: &mut EditorConfig){
     ec.mode = Mode::Insert;
 }
 
+fn ug_motion(ec: &mut EditorConfig){
+    ec.cy = ec.numrows - 1;
+}
+
+fn h_motion(ec: &mut EditorConfig){
+    if ec.cx > 0 {ec.cx -= 1;}
+}
+
+fn i_motion(ec: &mut EditorConfig){
+    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    ec.mode = Mode::Insert;
+}
+
+fn j_motion(ec: &mut EditorConfig){
+    if ec.cy < ec.numrows - 1 {ec.cy += 1;}
+}
+
+fn k_motion(ec: &mut EditorConfig){
+    if ec.cy > 0 {ec.cy -= 1;}
+}
+
+fn l_motion(ec: &mut EditorConfig){
+    if ec.cx < ec.rows[ec.cy as usize].data.len() as u16 {ec.cx += 1;}
+}
+
+fn v_motion(ec: &mut EditorConfig){
+    ec.mode = Mode::Visual
+}
+
+fn polling_motion(ec: &mut EditorConfig){
+    if ec.motion.len() > 3 {ec.motion = String::default()};
+    let _ = set_status_message(ec, ec.motion.clone());
+}
+
 /*** Keyboard Event Handling ***/
 fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
-    let mut motion_done = false;
+let mut motion_done = false;
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             // mark current row dirty (if we leave this row we rand to make lineno dark!)
@@ -529,26 +563,23 @@ fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
             if let KeyCode::Char(c) = key.code {
                 motion_done = true;
                 ec.motion.push(c);
-                match ec.motion.as_str() {
-                    "dd" => dd_motion(ec),
-                    "a" => a_motion(ec),
-                    "A" => ua_motion(ec),
-                    "b" => b_motion(ec),
-                    "G" => ec.cy = ec.numrows - 1,
-                    "h" => if ec.cx > 0 {ec.cx -= 1;},
-                    "i" => {
-                        stdout().execute(cursor::SetCursorStyle::SteadyBar)?;
-                        ec.mode = Mode::Insert;
-                    }
-                    "I" => ui_motion(ec),
-                    "j" => if ec.cy < ec.numrows - 1 {ec.cy += 1;},
-                    "k" => if ec.cy > 0 {ec.cy -= 1;},
-                    "l" => if ec.cx < ec.rows[ec.cy as usize].data.len() as u16 {ec.cx += 1;},
-                    "o" => o_motion(ec),
-                    "O" => uo_motion(ec),
-                    "v" => ec.mode = Mode::Visual,
-                    "w" => w_motion(ec),
-                    ":" => colon(ec),
+                let motion = match ec.motion.as_str() {
+                    "dd" => dd_motion,
+                    "a" => a_motion,
+                    "A" => ua_motion,
+                    "b" => b_motion,
+                    "G" => ug_motion,
+                    "h" => h_motion,
+                    "i" => i_motion,
+                    "I" => ui_motion,
+                    "j" => j_motion,
+                    "k" => k_motion,
+                    "l" => l_motion,
+                    "o" => o_motion,
+                    "O" => uo_motion,
+                    "v" => v_motion,
+                    "w" => w_motion,
+                    ":" => colon,
                     // "0"..="9" => {
                     //     let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
                     //     if ec.motion_count == 1 {ec.motion_count = num;}
@@ -560,11 +591,11 @@ fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
                     //     return Ok(true);
                     // }
                     _ => {
-                        if ec.motion.len() > 3 {ec.motion = String::default()};
-                        let _ = set_status_message(ec, ec.motion.clone());
                         motion_done = false;
-                    }
-                }
+                        polling_motion
+                    },
+                };
+                motion(ec);
             }
         }
     }
