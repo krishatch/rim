@@ -548,11 +548,6 @@ fn v_motion(ec: &mut EditorConfig){
     ec.mode = Mode::Visual
 }
 
-fn polling_motion(ec: &mut EditorConfig){
-    if ec.motion.len() > 3 {ec.motion = String::default()};
-    let _ = set_status_message(ec, ec.motion.clone());
-}
-
 /*** Keyboard Event Handling ***/
 fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
 let mut motion_done = false;
@@ -562,6 +557,17 @@ let mut motion_done = false;
             ec.dirty_rows.push(ec.cy - ec.rowoff);
             if let KeyCode::Char(c) = key.code {
                 motion_done = true;
+                // Check for number
+                if matches!(key.code, KeyCode::Char(c) if c.is_ascii_digit()){
+                    if !ec.motion.is_empty() {
+                        ec.motion = String::new();
+                    }
+                    let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
+                    ec.motion_count *= 10;
+                    ec.motion_count += num;
+                    set_status_message(ec, ec.motion_count.to_string())?;
+                    return Ok(true);
+                }
                 ec.motion.push(c);
                 let motion = match ec.motion.as_str() {
                     "dd" => dd_motion,
@@ -580,22 +586,19 @@ let mut motion_done = false;
                     "v" => v_motion,
                     "w" => w_motion,
                     ":" => colon,
-                    // "0"..="9" => {
-                    //     let num = c.to_digit(10).map(|n| n as u16).unwrap_or(0);
-                    //     if ec.motion_count == 1 {ec.motion_count = num;}
-                    //     else{
-                    //         ec.motion_count *= 10;
-                    //         ec.motion_count += num;
-                    //     }
-                    //     set_status_message(ec, ec.motion_count.to_string())?;
-                    //     return Ok(true);
-                    // }
                     _ => {
-                        motion_done = false;
-                        polling_motion
+                        if ec.motion.len() > 3 {ec.motion = String::default()};
+                        let _ = set_status_message(ec, ec.motion.clone());
+                        return Ok(false)
                     },
                 };
-                motion(ec);
+                if ec.motion_count == 0 {
+                    motion(ec)
+                }
+                for _i in 0..ec.motion_count {
+                    motion(ec);
+                }
+                ec.motion_count = 0;
             }
         }
     }
