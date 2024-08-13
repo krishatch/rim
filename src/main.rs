@@ -450,53 +450,37 @@ fn w_motion(ec: &mut EditorConfig){
 }
 
 fn b_motion(ec: &mut EditorConfig){
-    // WIP
-    let mut sep = false;
-    if ec.cx as usize >= ec.rows[ec.cy as usize].data.len() {ec.cx = (ec.rows[ec.cy as usize].data.len() - 1) as u16}
-    if ec.cx <= 2 {ec.cx = 0} else {ec.cx -= 2}
-    while !sep{
-        if ec.cx == 0 && ec.cy == 0 {
-            sep = true;
-        } else if ec.cx <= ec.rows[ec.cy as usize].indent * TAB_LENGTH{
-
-        }
-        // If we are on a separator, we are done and move cursor to the start of the next token
-        if SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()){
-            ec.cx += 1;
-            sep = true;
-        } else{
-            // Move cx back (if we can)
-            if ec.cx == 0 && ec.cy == 0 {
-                sep = true
-            } else if (ec.cx == 0 && ec.cy > 0) || ec.cx < (ec.rows[ec.cy as usize].indent * TAB_LENGTH) as u16 {
-                ec.cy -= 1;
-                ec.cx = ec.rows[ec.cy as usize].data.len() as u16;
-            } else {
-                ec.cx -= 1;
-            }
-        }
-
+    // Move back 1 (make sure we dont go below 0)
+    if ec.cx == 0 && ec.cy == 0 {return}
+    while ec.cx == 0 {
+        ec.cy -= 1;
+        ec.cx = ec.rows[ec.cy as usize].data.len() as u16;
     }
-    while !sep {
-        if ec.cx as usize == ec.rows[ec.cy as usize].data.len() && ec.cy == 0{
-           sep = true; 
-        } else if ec.cx as usize == 0 {
-            ec.cx = 0;
+    ec.cx -= 1;
+
+    // Keep going back until we find a letter
+    while SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()){
+        if ec.cx == 0 && ec.cy == 0 {return}
+        while ec.cx == 0 {
             ec.cy -= 1;
-            if ec.cx < ec.rows[ec.cy as usize].data.len() as u16 && !(SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap())){
-                sep = true;
-
-            }
-        } else if SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()) {
-            while ec.cx < ec.rows[ec.cy as usize].data.len() as u16 && SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()) {
-                ec.cx += 1;
-            }
-            sep = true;
+            ec.cx = ec.rows[ec.cy as usize].data.len() as u16;
         }
-        else {
-            ec.cx += 1;
-        }
+        ec.cx -= 1;
     }
+
+    // Find whitespace after finding this letter (or get to the front of line?)
+    while !SEPARATORS.contains(&ec.rows[ec.cy as usize].data.chars().nth(ec.cx as usize).unwrap()){
+        if ec.cx == 0 && ec.cy == 0 {return}
+        if ec.cx == 0 {return}
+        while ec.cx == 0 {
+            ec.cy -= 1;
+            ec.cx = ec.rows[ec.cy as usize].data.len() as u16;
+        }
+        ec.cx -= 1;
+    }
+
+    // Move to letter after whitespace
+    ec.cx += 1;
 }
 
 fn dd_motion(ec: &mut EditorConfig){
