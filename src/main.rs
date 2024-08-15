@@ -24,6 +24,7 @@ const C_KEYWORDS: [&str; 15] = ["switch",    "if",      "while",   "for",    "br
                          "typedef",   "static",  "enum",    "class",  "case"];
 const C_TYPES: [&str; 8] = ["int", "long", "double", "float", "char",
                                 "unsigned", "signed", "void"];
+const C_ENCLOSERS: [char; 2] = ['<', '"'];
 
 // Rust Syntax Highlighting
 const RUST_PREPROCESS: [&str; 1] = [".use"];
@@ -192,11 +193,13 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             cursor::MoveTo(0,y as u16),
             terminal::Clear(ClearType::CurrentLine),
         )?;
-        // If line is past file end
+
+        // If line is past file end draw ~
         if y >= ec.numrows {
             queue!(stdout(), crossterm::style::Print("~\r\n"))?;
             continue;
         }
+
         // line numbering
         // Relative line numbering first attempt. doesnt work now
         let lineno = (y + rowoff).to_string();
@@ -209,44 +212,65 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         )?;
         
 
-        // syntax highlighting and line output
-        let (keywords, types, preprocess) = match ec.filename.split('.').last().unwrap() {
-            "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec()),
-            "c" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec()),
-            "cpp" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec()),
-            "h" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec()),
-            "lua" => (LUA_KEYWORDS.to_vec(), LUA_TYPES.to_vec(), LUA_PREPROCCESS.to_vec()),
+        // highlighted words
+        let (keywords, types, preprocess, enclosers) = match ec.filename.split('.').last().unwrap() {
+            "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec(), vec![]),
+            "c" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
+            "cpp" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
+            "h" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
+            "lua" => (LUA_KEYWORDS.to_vec(), LUA_TYPES.to_vec(), LUA_PREPROCCESS.to_vec(), vec![]),
             _ => {
                 let _ = set_status_message(ec, "Filetype not supported for syntax higlighting!".to_string());
-                (vec![], vec![], vec![])
+                (vec![], vec![], vec![], vec![])
             },
         };
 
-        let mut declaration = false;
+        let mut enclosed = false;
         for token in ec.rows[y + rowoff].data.split_inclusive(SEPARATORS){
-            let token_text = &token[0..token.len() - 1];
-            let delimiter = token.chars().last().unwrap();
+            // Default white
             let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
-            if delimiter == '(' {textcolor = crossterm::style::Color::Blue}
-            if delimiter == '"' {textcolor = crossterm::style::Color::Yellow}
-            if declaration {
-            if !ec.vars.contains(&token_text.to_string()) {ec.vars.append(vec![token_text.to_string()].as_mut())};
-                textcolor = crossterm::style::Color::Rgb { r: 0xf4, g: 0xb6, b: 0xc2 };
-                declaration = false;
+
+            let (mut token_text, mut separator);
+            if SEPARATORS.contains(&token.chars().last().unwrap()){
+                token_text = token.split(SEPARATORS).next().unwrap();
+                separator = token.chars().last().unwrap().to_string();
+
+            } else {
+                token_text = token;
+                separator = "".to_string();
             }
+
+            // highlight token text
             if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
             if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
             if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
+
+            // If we are in an "encloser" (like "") make all highlights yellow
+            if enclosed {
+                token_text = token;
+                separator = "".to_string();
+                textcolor = crossterm::style::Color::Yellow;
+                if ['\"', '>'].contains(&token.chars().last().unwrap()){
+                    enclosed = false
+                }
+            }
+            if enclosers.contains(&token.chars().next().unwrap()) {
+                token_text = token;
+                separator = "".to_string();
+                textcolor = crossterm::style::Color::Yellow;
+                enclosed = true;
+            }
+
             queue!(stdout(),
                 SetForegroundColor(textcolor),
                 crossterm::style::Print(token_text.to_string()),
+                )?;
+            queue!(stdout(),
                 ResetColor,
-                crossterm::style::Print(delimiter.to_string())
+                crossterm::style::Print(separator.to_string())
             )?;
-            if RUST_DECLARATIONS.contains(&token_text){
-                declaration = true;
-            }
         }
+
         queue!(stdout(),
             crossterm::style::Print("\r\n"),
             ResetColor
