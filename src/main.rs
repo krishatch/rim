@@ -48,6 +48,7 @@ const LUA_KEYWORDS: [&str; 21] = ["and", "break", "do", "else", "elseif", "end",
     "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
     "until", "while"];
 const LUA_TYPES: [&str; 1] = ["local"];
+const LUA_ENCLOSERS: [char; 1] = ['"'];
 
 const TAB_LENGTH: usize = 4;
 const SEPARATORS: [char; 11] = ['\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
@@ -218,7 +219,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             "c" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
             "cpp" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
             "h" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
-            "lua" => (LUA_KEYWORDS.to_vec(), LUA_TYPES.to_vec(), LUA_PREPROCCESS.to_vec(), vec![]),
+            "lua" => (LUA_KEYWORDS.to_vec(), LUA_TYPES.to_vec(), LUA_PREPROCCESS.to_vec(), LUA_ENCLOSERS.to_vec()),
             _ => {
                 let _ = set_status_message(ec, "Filetype not supported for syntax higlighting!".to_string());
                 (vec![], vec![], vec![], vec![])
