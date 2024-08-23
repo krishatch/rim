@@ -48,7 +48,7 @@ const LUA_KEYWORDS: [&str; 21] = ["and", "break", "do", "else", "elseif", "end",
     "for", "function", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
     "until", "while"];
 const LUA_TYPES: [&str; 1] = ["local"];
-const LUA_ENCLOSERS: [char; 1] = ['"'];
+const LUA_ENCLOSERS: [char; 2] = ['"', '\''];
 
 const TAB_LENGTH: usize = 4;
 const SEPARATORS: [char; 11] = ['\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
