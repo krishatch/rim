@@ -251,7 +251,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
                 token_text = token;
                 separator = "".to_string();
                 textcolor = crossterm::style::Color::Yellow;
-                if ['\"', '>'].contains(&token.chars().last().unwrap()){
+                if ['\'', '\"', '>'].contains(&token.chars().last().unwrap()){
                     enclosed = false
                 }
             }
