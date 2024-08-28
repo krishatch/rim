@@ -558,6 +558,57 @@ fn v_motion(ec: &mut EditorConfig){
     ec.mode = Mode::Visual
 }
 
+fn empty_up(ec: &mut EditorConfig) {
+    if ec.cy == 0 {return}
+    ec.cy -= 1;
+    while !ec.rows[ec.cy].data.is_empty() {
+        if ec.cy == 0 {return}
+        ec.cy -= 1;
+    }
+}
+
+fn empty_down(ec: &mut EditorConfig) {
+    if ec.cy == ec.numrows - 1 {return}
+    ec.cy += 1;
+    while !ec.rows[ec.cy].data.is_empty() {
+        if ec.cy == ec.numrows - 1 {return}
+        ec.cy += 1;
+    }
+}
+
+fn gg_motion(ec: &mut EditorConfig){
+    ec.cy = 0;
+}
+
+fn x_motion(ec: &mut EditorConfig){
+    if ec.cx == ec.rows[ec.cy].data.len() {return}
+    ec.rows[ec.cy].data.remove(ec.cx);
+}
+
+fn e_motion(ec: &mut EditorConfig){
+    // Move forward 2 (make sure we dont go past eof)
+    ec.cx += 2;
+    if ec.cy == ec.numrows - 1 && ec.cx >= ec.rows[ec.cy].data.len() {return}
+
+    if ec.cx >= ec.rows[ec.cy].data.len() {
+        ec.cy += 1;
+        ec.cx = 0;
+        if ec.rows[ec.cy].data.is_empty() {return}
+        while ec.rows[ec.cy].data.chars().nth(ec.cx).unwrap() == ' ' {ec.cx += 1}
+        return
+    }
+
+    // Find a separator
+    while !SEPARATORS.contains(&ec.rows[ec.cy].data.chars().nth(ec.cx).unwrap()){
+        if ec.cy == ec.numrows && ec.cx >= ec.rows[ec.cy].data.len() {return}
+        if ec.cx == ec.rows[ec.cy].data.len() - 1 {return}
+        ec.cx += 1;
+    }
+
+    // go back to the last token
+    ec.cx -= 1;
+}
+
 /*** Keyboard Event Handling ***/
 fn handle_normal(ec: &mut EditorConfig) -> io::Result<bool>  {
 let mut motion_done = false;
@@ -584,7 +635,9 @@ let mut motion_done = false;
                     "a" => a_motion,
                     "A" => ua_motion,
                     "b" => b_motion,
+                    "e" => e_motion,
                     "G" => ug_motion,
+                    "gg" => gg_motion,
                     "h" => h_motion,
                     "i" => i_motion,
                     "I" => ui_motion,
@@ -595,7 +648,10 @@ let mut motion_done = false;
                     "O" => uo_motion,
                     "v" => v_motion,
                     "w" => w_motion,
+                    "x" => x_motion,
                     ":" => colon,
+                    "{" => empty_up,
+                    "}" => empty_down,
                     _ => {
                         if ec.motion.len() > 3 {ec.motion = String::default()};
                         let _ = set_status_message(ec, ec.motion.clone());
