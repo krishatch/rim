@@ -1,10 +1,5 @@
 use std::{env, fs, io::{self, stdout,  Write}, process::exit};
-use crossterm::{cursor::{self, *}, 
-    event::{self, Event, KeyCode}, 
-    queue,
-    execute, 
-    style::{ResetColor, SetColors, SetForegroundColor}, 
-    terminal::{
+use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, queue, style::{Color, ResetColor, SetColors, SetForegroundColor}, terminal::{
         self, 
         disable_raw_mode, 
         enable_raw_mode, 
@@ -14,8 +9,7 @@ use crossterm::{cursor::{self, *},
         DisableLineWrap, 
         EnterAlternateScreen, 
         LeaveAlternateScreen
-    }, 
-    ExecutableCommand};
+    }, ExecutableCommand};
 
 // C Syntax Highlighting
 const C_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
@@ -51,7 +45,7 @@ const LUA_TYPES: [&str; 1] = ["local"];
 const LUA_ENCLOSERS: [char; 2] = ['"', '\''];
 
 const TAB_LENGTH: usize = 4;
-const SEPARATORS: [char; 11] = ['\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
+const SEPARATORS: [char; 12] = [';', '\t', ' ', '.', ',', '{', '}', '(', ')', '<', '>', '"'];
 
 #[derive(Default, PartialEq, PartialOrd)]
 enum Mode {
@@ -242,6 +236,8 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             }
 
             // highlight token text
+            if separator == '('.to_string() {textcolor = crossterm::style::Color::Blue}
+            if token_text != "".to_string() && token_text.chars().next().unwrap().is_numeric() {textcolor = crossterm::style::Color::Red}
             if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
             if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
             if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
@@ -739,6 +735,14 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
                         ec.j_flag = true;
                     }
                 }
+            } else if key.code == KeyCode::Left{
+                h_motion(ec);
+            } else if key.code == KeyCode::Right {
+                l_motion(ec);
+            } else if key.code == KeyCode::Down {
+                j_motion(ec);
+            } else if key.code == KeyCode::Up {
+                k_motion(ec);
             } else if key.code == KeyCode::Tab {
                 let tab_str = " ".repeat(TAB_LENGTH);
                 let cy: usize = ec.cy;
