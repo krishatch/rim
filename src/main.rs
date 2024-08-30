@@ -1,5 +1,10 @@
 use std::{env, fs, io::{self, stdout,  Write}, process::exit};
-use crossterm::{cursor::{self, *}, event::{self, Event, KeyCode}, execute, queue, style::{Color, ResetColor, SetColors, SetForegroundColor}, terminal::{
+use crossterm::{cursor::{self, *}, 
+    event::{self, Event, KeyCode}, 
+    execute, 
+    queue, 
+    style::{ResetColor, SetColors, SetForegroundColor}, 
+    terminal::{
         self, 
         disable_raw_mode, 
         enable_raw_mode, 
@@ -22,7 +27,8 @@ const C_ENCLOSERS: [char; 2] = ['<', '"'];
 
 // Rust Syntax Highlighting
 const RUST_PREPROCESS: [&str; 1] = [".use"];
-const RUST_DECLARATIONS: [&str; 2] = ["let", "mut"];
+// These declarations are for if we want to be able to collect the file's variables (unused)
+// const RUST_DECLARATIONS: [&str; 2] = ["let", "mut"];
 const RUST_KEYWORDS: [&str; 51] = ["as", "break",  "const", "continue", "crate",  "else", "enum",
     "extern", "false",  "fn",       "for",      "if",     "impl",    "in",
     "let",    "loop",   "match",    "mod",      "move",   "mut",     "pub",
@@ -34,6 +40,7 @@ const RUST_KEYWORDS: [&str; 51] = ["as", "break",  "const", "continue", "crate",
 const RUST_TYPES: [&str; 16] = ["i8", "i16", "i32",     "i64",     "i128",  "isize",  "u8",
     "u16",   "u32",   "u64",     "u128",    "usize",  "f32",    "f64",
     "bool",  "char"];
+const RUST_ENCLOSERS: [char; 1] = ['"'];
 
 // Lua Syntax Highlighting
 const LUA_PREPROCCESS: [&str; 11] = ["priority", "prefsys", "identifier", "class", "handler",
@@ -88,7 +95,7 @@ struct EditorConfig {
     command: String,
     motion: String,
     motion_count: usize,
-    vars: Vec<String>,
+    // vars: Vec<String>,
     j_flag: bool,
 }
 
@@ -114,7 +121,7 @@ impl EditorConfig {
             command: String::default(),
             motion: String::default(),
             motion_count: 1,
-            vars: vec![],
+            // vars: vec![],
             j_flag: false,
         })
     }
@@ -205,11 +212,10 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             crossterm::style::Print(format!("{}{} ", lineno_spaces, lineno)),
             ResetColor
         )?;
-        
 
         // highlighted words
         let (keywords, types, preprocess, enclosers) = match ec.filename.split('.').last().unwrap() {
-            "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec(), vec![]),
+            "rs" => (RUST_KEYWORDS.to_vec(), RUST_TYPES.to_vec(), RUST_PREPROCESS.to_vec(), RUST_ENCLOSERS.to_vec()),
             "c" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
             "cpp" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
             "h" => (C_KEYWORDS.to_vec(), C_TYPES.to_vec(), C_PREPROCESS.to_vec(), C_ENCLOSERS.to_vec()),
@@ -221,6 +227,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         };
 
         let mut enclosed = false;
+        let mut comment = false;
         for token in ec.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             // Default white
             let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
@@ -234,6 +241,8 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
                 token_text = token;
                 separator = "".to_string();
             }
+
+            if token_text == "//" {comment = true}
 
             // highlight token text
             if separator == '('.to_string() {textcolor = crossterm::style::Color::Blue}
@@ -257,6 +266,8 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
                 textcolor = crossterm::style::Color::Yellow;
                 enclosed = true;
             }
+
+            if comment {textcolor = crossterm::style::Color::Grey}
 
             queue!(stdout(),
                 SetForegroundColor(textcolor),
@@ -858,4 +869,3 @@ fn handle_command(ec: &mut EditorConfig) -> io::Result<bool>{
     }
     Ok(false)
 }
-
