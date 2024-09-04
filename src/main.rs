@@ -95,6 +95,7 @@ struct EditorConfig {
     command: String,
     motion: String,
     motion_count: usize,
+    hl_colors: Vec<Vec<u8>>,
     // vars: Vec<String>,
     j_flag: bool,
 }
@@ -121,6 +122,15 @@ impl EditorConfig {
             command: String::default(),
             motion: String::default(),
             motion_count: 1,
+            hl_colors: vec![
+                vec![0xff, 0xff, 0xff], // default text color
+                vec![0x36, 0x74, 0xf0], // function call
+                vec![0xfc, 0xf3, 0x92], // strings
+                vec![0xa7, 0x82, 0xf7], // keywords
+                vec![0x88, 0xfb, 0xd2], // types
+                vec![0xea, 0x4d, 0x44], // preprocess and ints
+                vec![128, 128, 128] // comments
+            ],
             // vars: vec![],
             j_flag: false,
         })
@@ -137,6 +147,7 @@ fn main() -> io::Result<()> {
     let mut ec = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
+    set_config(&mut ec);
 
     let mut refresh = true;
     loop {
@@ -149,6 +160,12 @@ fn main() -> io::Result<()> {
             Mode::Command => handle_command(&mut ec).unwrap(),
         };
     }
+}
+
+fn set_config(ec: &mut EditorConfig){
+    // Todo: read in JSON file and set ec hl colors
+    // basically, open the json file and check if each color exists and if it does update the
+    // respective vec
 }
 
 fn editor_scroll(ec: &mut EditorConfig) -> io::Result<()> {
@@ -230,7 +247,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         let mut comment = false;
         for token in ec.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             // Default white
-            let mut textcolor = crossterm::style::Color::Rgb { r: 0xff, g: 0xff, b: 0xff };
+            let mut textcolor = ec.hl_colors[0].clone();
 
             let (mut token_text, mut separator);
             if SEPARATORS.contains(&token.chars().last().unwrap()){
@@ -245,17 +262,17 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             if token_text == "//" {comment = true}
 
             // highlight token text
-            if separator == '('.to_string() {textcolor = crossterm::style::Color::Blue}
-            if token_text != "".to_string() && token_text.chars().next().unwrap().is_numeric() {textcolor = crossterm::style::Color::Red}
-            if keywords.contains(&token_text) {textcolor = crossterm::style::Color::Magenta}
-            if types.contains(&token_text) {textcolor = crossterm::style::Color::DarkGreen}
-            if preprocess.contains(&token_text) {textcolor = crossterm::style::Color::Red}
+            if separator == '('.to_string() {textcolor = ec.hl_colors[1].clone()}
+            if token_text != "".to_string() && token_text.chars().next().unwrap().is_numeric() {textcolor = ec.hl_colors[5].clone()}
+            if keywords.contains(&token_text) {textcolor = ec.hl_colors[3].clone()}
+            if types.contains(&token_text) {textcolor = ec.hl_colors[4].clone()}
+            if preprocess.contains(&token_text) {textcolor = ec.hl_colors[5].clone()}
 
             // If we are in an "encloser" (like "") make all highlights yellow
             if enclosed {
                 token_text = token;
                 separator = "".to_string();
-                textcolor = crossterm::style::Color::Yellow;
+                textcolor = ec.hl_colors[2].clone();
                 if ['\'', '\"', '>'].contains(&token.chars().last().unwrap()){
                     enclosed = false
                 }
@@ -263,14 +280,14 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             if enclosers.contains(&token.chars().next().unwrap()) {
                 token_text = token;
                 separator = "".to_string();
-                textcolor = crossterm::style::Color::Yellow;
+                textcolor = ec.hl_colors[2].clone();
                 enclosed = true;
             }
 
-            if comment {textcolor = crossterm::style::Color::Grey}
+            if comment {textcolor = ec.hl_colors[6].clone()}
 
             queue!(stdout(),
-                SetForegroundColor(textcolor),
+                SetForegroundColor(crossterm::style::Color::Rgb { r: textcolor[0], g: textcolor[1], b: textcolor[2] }),
                 crossterm::style::Print(token_text.to_string()),
                 )?;
             queue!(stdout(),
