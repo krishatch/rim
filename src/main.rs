@@ -1,4 +1,4 @@
-use std::{env, fs, io::{self, stdout,  Write}, process::exit};
+use std::{env, fs, io::{self, stdout,  Write}, path::Path, process::exit};
 use crossterm::{cursor::{self, *}, 
     event::{self, Event, KeyCode}, 
     execute, 
@@ -15,6 +15,8 @@ use crossterm::{cursor::{self, *},
         EnterAlternateScreen, 
         LeaveAlternateScreen
     }, ExecutableCommand};
+
+mod utils;
 
 // C Syntax Highlighting
 const C_PREPROCESS: [&str; 4] = ["#include", "#ifndef", "#define", "extern"];
@@ -95,7 +97,7 @@ struct EditorConfig {
     command: String,
     motion: String,
     motion_count: usize,
-    hl_colors: Vec<Vec<u8>>,
+    hl_colors: Vec<u32>,
     // vars: Vec<String>,
     j_flag: bool,
 }
@@ -123,13 +125,13 @@ impl EditorConfig {
             motion: String::default(),
             motion_count: 1,
             hl_colors: vec![
-                vec![0xff, 0xff, 0xff], // default text color
-                vec![0x36, 0x74, 0xf0], // function call
-                vec![0xfc, 0xf3, 0x92], // strings
-                vec![0xa7, 0x82, 0xf7], // keywords
-                vec![0x88, 0xfb, 0xd2], // types
-                vec![0xea, 0x4d, 0x44], // preprocess and ints
-                vec![128, 128, 128] // comments
+                0xffffff, // default text color
+                0x3674f0, // function call
+                0xfcf392, // strings
+                0xa782f7, // keywords
+                0x88fbd2, // types
+                0xea4d44, // preprocess and ints
+                0x0f0f0f // comments
             ],
             // vars: vec![],
             j_flag: false,
@@ -149,6 +151,7 @@ fn main() -> io::Result<()> {
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
     set_config(&mut ec);
 
+
     let mut refresh = true;
     loop {
         if refresh {let _ = refresh_screen(&mut ec);} 
@@ -166,6 +169,35 @@ fn set_config(ec: &mut EditorConfig){
     // Todo: read in JSON file and set ec hl colors
     // basically, open the json file and check if each color exists and if it does update the
     // respective vec
+
+    let conf_path;
+    if let Some(home) = env::var_os("HOME"){
+        let home_path = Path::new(&home);
+        let rel_path = ".config/rim.json";
+        conf_path = home_path.join(rel_path);
+    } else {
+        return
+    }
+
+    let json: String = match fs::read_to_string(conf_path.clone()){
+        Ok(file_content) => {
+            let _ = set_status_message(ec, "found config".to_string());
+            file_content
+        },
+        Err(_) => {
+            println!("no config... generating default");
+            // default json
+            // let _ = fs::File::create(filename);
+            let json = serde_json::to_string(&ec.hl_colors).unwrap();
+            if let Some(parent) = Path::new(&conf_path).parent() {
+                let _ = fs::create_dir_all(parent);
+            } 
+            fs::write(conf_path, json.clone()).expect(format!("unable to write: {}", json.as_str()).as_str());
+            json
+        }
+    };
+    ec.hl_colors = serde_json::from_str(&json).unwrap();
+    println!("{}", json);
 }
 
 fn editor_scroll(ec: &mut EditorConfig) -> io::Result<()> {
@@ -247,7 +279,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         let mut comment = false;
         for token in ec.rows[y + rowoff].data.split_inclusive(SEPARATORS){
             // Default white
-            let mut textcolor = ec.hl_colors[0].clone();
+            let mut textcolor = ec.hl_colors[0];
 
             let (mut token_text, mut separator);
             if SEPARATORS.contains(&token.chars().last().unwrap()){
@@ -262,17 +294,17 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             if token_text == "//" {comment = true}
 
             // highlight token text
-            if separator == '('.to_string() {textcolor = ec.hl_colors[1].clone()}
-            if token_text != "".to_string() && token_text.chars().next().unwrap().is_numeric() {textcolor = ec.hl_colors[5].clone()}
-            if keywords.contains(&token_text) {textcolor = ec.hl_colors[3].clone()}
-            if types.contains(&token_text) {textcolor = ec.hl_colors[4].clone()}
-            if preprocess.contains(&token_text) {textcolor = ec.hl_colors[5].clone()}
+            if separator == '('.to_string() {textcolor = ec.hl_colors[1]}
+            if token_text != "".to_string() && token_text.chars().next().unwrap().is_numeric() {textcolor = ec.hl_colors[5]}
+            if keywords.contains(&token_text) {textcolor = ec.hl_colors[3]}
+            if types.contains(&token_text) {textcolor = ec.hl_colors[4]}
+            if preprocess.contains(&token_text) {textcolor = ec.hl_colors[5]}
 
             // If we are in an "encloser" (like "") make all highlights yellow
             if enclosed {
                 token_text = token;
                 separator = "".to_string();
-                textcolor = ec.hl_colors[2].clone();
+                textcolor = ec.hl_colors[2];
                 if ['\'', '\"', '>'].contains(&token.chars().last().unwrap()){
                     enclosed = false
                 }
@@ -280,14 +312,14 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
             if enclosers.contains(&token.chars().next().unwrap()) {
                 token_text = token;
                 separator = "".to_string();
-                textcolor = ec.hl_colors[2].clone();
+                textcolor = ec.hl_colors[2];
                 enclosed = true;
             }
 
-            if comment {textcolor = ec.hl_colors[6].clone()}
-
+            if comment {textcolor = ec.hl_colors[6]}
+            let (r,g,b) = utils::split_hex_into_bytes(textcolor);
             queue!(stdout(),
-                SetForegroundColor(crossterm::style::Color::Rgb { r: textcolor[0], g: textcolor[1], b: textcolor[2] }),
+                SetForegroundColor(crossterm::style::Color::Rgb {r, g, b}),
                 crossterm::style::Print(token_text.to_string()),
                 )?;
             queue!(stdout(),
