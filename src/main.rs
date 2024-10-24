@@ -104,7 +104,8 @@ struct EditorConfig {
 
 impl EditorConfig {
     fn new() -> io::Result<Self> {
-        let (cols, rows) = size()?;
+        // let (cols, rows) = size()?;
+        let (cols, rows) = (120, 30);
 
         Ok(EditorConfig {
             mode: Mode::default(),
@@ -142,14 +143,15 @@ impl EditorConfig {
 fn main() -> io::Result<()> {
     /*** Set up terminal ***/
     enable_raw_mode()?;
-    execute!(stdout(),
-        EnterAlternateScreen,
-        DisableLineWrap
-    )?;
+    // execute!(stdout(),
+    //     EnterAlternateScreen,
+    //     DisableLineWrap
+    // )?;
+    print!("\x1b[?1049h\x1b[?7l");
     let mut ec = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
-    set_config(&mut ec);
+    // set_config(&mut ec);
 
 
     let mut refresh = true;
@@ -204,18 +206,18 @@ fn editor_scroll(ec: &mut EditorConfig) -> io::Result<()> {
   if ec.cy < ec.rowoff {
     let mut scroll_diff = ec.rowoff - ec.cy;
     scroll_diff = if scroll_diff > ec.screenrows {ec.screenrows} else {scroll_diff};
-    queue!(stdout(),
-        terminal::ScrollDown(scroll_diff as u16)
-    )?;
+    // queue!(stdout(),
+    //     terminal::ScrollDown(scroll_diff as u16)
+    // )?;
     ec.dirty_rows.extend(0..scroll_diff);
     ec.rowoff = ec.cy;
   } else if ec.cy >= ec.rowoff + ec.screenrows {
     let mut scroll_diff = ec.cy - (ec.rowoff + ec.screenrows);
     scroll_diff+=1;
     scroll_diff = if scroll_diff > ec.screenrows {ec.screenrows} else {scroll_diff};
-    queue!(stdout(),
-        terminal::ScrollUp(scroll_diff as u16)
-    )?;
+    // queue!(stdout(),
+    //     terminal::ScrollUp(scroll_diff as u16)
+    // )?;
     ec.dirty_rows.extend((ec.screenrows - scroll_diff)..ec.screenrows);
     ec.rowoff = ec.cy - ec.screenrows + 1;
   }
@@ -232,22 +234,26 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
     let _ = editor_scroll(ec);
     ec.dirty_rows.push(ec.cy - ec.rowoff);
-    queue!(stdout(), 
-        cursor::Hide,
-        cursor::MoveTo(0, ec.numrows as u16 + 2),
-        terminal::Clear(ClearType::CurrentLine),
-    )?;
+    // queue!(stdout(), 
+    //     cursor::Hide,
+    //     cursor::MoveTo(0, ec.numrows as u16 + 2),
+    //     terminal::Clear(ClearType::CurrentLine),
+    // )?;
+    print!("\x1b[0;{}H\x1b[2K", ec.numrows + 2);
+    // print!("\x1b[?25l\x1b[0;{}H\x1b[2K", ec.numrows + 2);
 
     let rowoff: usize = ec.rowoff;
     for y in ec.dirty_rows.clone() {
-        queue!(stdout(), 
-            cursor::MoveTo(0,y as u16),
-            terminal::Clear(ClearType::CurrentLine),
-        )?;
+        // queue!(stdout(), 
+        //     cursor::MoveTo(0,y as u16),
+        //     terminal::Clear(ClearType::CurrentLine),
+        // )?;
+        // print!("\x1b[0;{}H\x1b[2K", y);
 
         // If line is past file end draw ~
         if y >= ec.numrows {
-            queue!(stdout(), crossterm::style::Print("~\r\n"))?;
+            // queue!(stdout(), crossterm::style::Print("~\r\n"))?;
+            // print!("~\r\n");
             continue;
         }
 
@@ -256,11 +262,12 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         let lineno = (y + rowoff).to_string();
         let foreground_color = crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb };
         let lineno_spaces = " ".repeat(5 - lineno.len());
-        queue!(stdout(), 
-            SetForegroundColor(foreground_color),
-            crossterm::style::Print(format!("{}{} ", lineno_spaces, lineno)),
-            ResetColor
-        )?;
+        // queue!(stdout(), 
+        //     SetForegroundColor(foreground_color),
+        //     crossterm::style::Print(format!("{}{} ", lineno_spaces, lineno)),
+        //     ResetColor
+        // )?;
+        print!("\x1b[38;2;{};{};{}m{}{}\x1b[m", 0x87, 0xce, 0xeb, lineno_spaces, lineno);
 
         // highlighted words
         let (keywords, types, preprocess, enclosers) = match ec.filename.split('.').last().unwrap() {
@@ -318,20 +325,22 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
 
             if comment {textcolor = ec.hl_colors[6]}
             let (r,g,b) = utils::split_hex_into_bytes(textcolor);
-            queue!(stdout(),
-                SetForegroundColor(crossterm::style::Color::Rgb {r, g, b}),
-                crossterm::style::Print(token_text.to_string()),
-                )?;
-            queue!(stdout(),
-                ResetColor,
-                crossterm::style::Print(separator.to_string())
-            )?;
+            // queue!(stdout(),
+            //     SetForegroundColor(crossterm::style::Color::Rgb {r, g, b}),
+            //     crossterm::style::Print(token_text.to_string()),
+            //     )?;
+            // queue!(stdout(),
+            //     ResetColor,
+            //     crossterm::style::Print(separator.to_string())
+            // )?;
+            print!("\x1b[38;2;{};{};{}m{}\x1b[m{}", r, g, b, token_text, separator);
         }
 
-        queue!(stdout(),
-            crossterm::style::Print("\r\n"),
-            ResetColor
-        )?;
+        // queue!(stdout(),
+        //     crossterm::style::Print("\r\n"),
+        //     ResetColor
+        // )?;
+        print!("\r\n\x1b[m");
     }
 
     // write status line and command
@@ -341,20 +350,22 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
     // Prevent cx from going past row length
     let rowlen = ec.rows[ec.cy].data.len();
     if ec.cx > rowlen{
-        queue!(stdout(), cursor::MoveTo(rowlen as u16, ec.cy as u16))?;
+        // queue!(stdout(), cursor::MoveTo(rowlen as u16, ec.cy as u16))?;
+        print!("\x1b[{};{}H", rowlen, ec.cy);
         ec.cx = rowlen;
     }
 
     // Offset from line numbering
-    queue!(stdout(), 
-        cursor::MoveTo(ec.cx as u16 + 6, ec.cy as u16 - ec.rowoff as u16),
-        cursor::Show,
-    )?;
+    // queue!(stdout(), 
+    //     cursor::MoveTo(ec.cx as u16 + 6, ec.cy as u16 - ec.rowoff as u16),
+    //     cursor::Show,
+    // )?;
+    print!("\x1b[{}{}H\x1b[?25h", ec.cx + 6, ec.cy - ec.rowoff);
 
     // Set dirty rows to empty
     ec.dirty_rows = vec![];
     // Flush the queue to do the refresh
-    stdout().flush()?;
+    // stdout().flush()?;
     Ok(())
 }
 
