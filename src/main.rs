@@ -149,7 +149,7 @@ fn main() -> io::Result<()> {
     let mut ec = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
-    set_config(&mut ec);
+    // set_config(&mut ec);
 
 
     let mut refresh = true;
