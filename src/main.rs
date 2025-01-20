@@ -143,15 +143,11 @@ impl EditorConfig {
 fn main() -> io::Result<()> {
     /*** Set up terminal ***/
     enable_raw_mode()?;
-    // execute!(stdout(),
-    //     EnterAlternateScreen,
-    //     DisableLineWrap
-    // )?;
     print!("\x1b[?1049h\x1b[?7l");
     let mut ec = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
-    // set_config(&mut ec);
+    set_config(&mut ec);
 
 
     let mut refresh = true;
@@ -232,28 +228,19 @@ fn editor_scroll(ec: &mut EditorConfig) -> io::Result<()> {
 
 fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
-    let _ = editor_scroll(ec);
+    // let _ = editor_scroll(ec);
     ec.dirty_rows.push(ec.cy - ec.rowoff);
-    // queue!(stdout(), 
-    //     cursor::Hide,
-    //     cursor::MoveTo(0, ec.numrows as u16 + 2),
-    //     terminal::Clear(ClearType::CurrentLine),
-    // )?;
-    print!("\x1b[0;{}H\x1b[2K", ec.numrows + 2);
-    // print!("\x1b[?25l\x1b[0;{}H\x1b[2K", ec.numrows + 2);
+    // Hide cursor, move to last line, clear
+    print!("\x1b[?25l\x1b[{};0H\x1b[2K", ec.numrows + 2);
 
     let rowoff: usize = ec.rowoff;
     for y in ec.dirty_rows.clone() {
-        // queue!(stdout(), 
-        //     cursor::MoveTo(0,y as u16),
-        //     terminal::Clear(ClearType::CurrentLine),
-        // )?;
-        // print!("\x1b[0;{}H\x1b[2K", y);
+        // Move to (line y, col 0) and clear
+        print!("\x1b[{};0H\x1b[2K", y);
 
         // If line is past file end draw ~
         if y >= ec.numrows {
-            // queue!(stdout(), crossterm::style::Print("~\r\n"))?;
-            // print!("~\r\n");
+            print!("~\r\n");
             continue;
         }
 
@@ -262,11 +249,7 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
         let lineno = (y + rowoff).to_string();
         let foreground_color = crossterm::style::Color::Rgb { r: 0x87, g: 0xce, b: 0xeb };
         let lineno_spaces = " ".repeat(5 - lineno.len());
-        // queue!(stdout(), 
-        //     SetForegroundColor(foreground_color),
-        //     crossterm::style::Print(format!("{}{} ", lineno_spaces, lineno)),
-        //     ResetColor
-        // )?;
+        // Set fg, print lineno, reset fg
         print!("\x1b[38;2;{};{};{}m{}{}\x1b[m", 0x87, 0xce, 0xeb, lineno_spaces, lineno);
 
         // highlighted words
@@ -325,21 +308,11 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
 
             if comment {textcolor = ec.hl_colors[6]}
             let (r,g,b) = utils::split_hex_into_bytes(textcolor);
-            // queue!(stdout(),
-            //     SetForegroundColor(crossterm::style::Color::Rgb {r, g, b}),
-            //     crossterm::style::Print(token_text.to_string()),
-            //     )?;
-            // queue!(stdout(),
-            //     ResetColor,
-            //     crossterm::style::Print(separator.to_string())
-            // )?;
+            // Set fg, print text, reset fg, print separator
             print!("\x1b[38;2;{};{};{}m{}\x1b[m{}", r, g, b, token_text, separator);
         }
 
-        // queue!(stdout(),
-        //     crossterm::style::Print("\r\n"),
-        //     ResetColor
-        // )?;
+        // print \r\n and reset color
         print!("\r\n\x1b[m");
     }
 
@@ -351,21 +324,17 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
     let rowlen = ec.rows[ec.cy].data.len();
     if ec.cx > rowlen{
         // queue!(stdout(), cursor::MoveTo(rowlen as u16, ec.cy as u16))?;
-        print!("\x1b[{};{}H", rowlen, ec.cy);
+        print!("\x1b[{};{}H", ec.cy, rowlen);
         ec.cx = rowlen;
     }
 
-    // Offset from line numbering
-    // queue!(stdout(), 
-    //     cursor::MoveTo(ec.cx as u16 + 6, ec.cy as u16 - ec.rowoff as u16),
-    //     cursor::Show,
-    // )?;
-    print!("\x1b[{}{}H\x1b[?25h", ec.cx + 6, ec.cy - ec.rowoff);
+    // move to (line = curr line, col = curr col + 6 for lineno) and show cursor
+    print!("\x1b[{};{}H\x1b[?25h", ec.cy - ec.rowoff,ec.cx + 6);
 
     // Set dirty rows to empty
     ec.dirty_rows = vec![];
     // Flush the queue to do the refresh
-    // stdout().flush()?;
+    stdout().flush()?;
     Ok(())
 }
 
@@ -478,13 +447,14 @@ fn colon(ec: &mut EditorConfig){
 
 fn ua_motion(ec: &mut EditorConfig){
     ec.cx = ec.rows[ec.cy].data.len();
-    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    // let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
 fn a_motion(ec: &mut EditorConfig) {
     ec.cx += 1;
-    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
@@ -498,7 +468,8 @@ fn o_motion(ec: &mut EditorConfig){
     ec.numrows += 1;
     // set all rows after as dirty
     ec.dirty_rows.extend((ec.cy - ec.rowoff)..ec.screenrows);
-    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    // let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
@@ -511,7 +482,8 @@ fn uo_motion(ec: &mut EditorConfig){
     ec.numrows += 1;
     // set all rows after as dirty
     ec.dirty_rows.extend((ec.cy - ec.rowoff)..ec.screenrows);
-    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    // let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
@@ -592,7 +564,8 @@ fn dd_motion(ec: &mut EditorConfig){
 
 fn ui_motion(ec: &mut EditorConfig){
     ec.cx = ec.rows[ec.cy].indent * TAB_LENGTH;
-    let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    // let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
@@ -606,6 +579,7 @@ fn h_motion(ec: &mut EditorConfig){
 
 fn i_motion(ec: &mut EditorConfig){
     let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
+    print!("\x1b[6q\x1b[K");
     ec.mode = Mode::Insert;
 }
 
@@ -787,7 +761,8 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
                     ec.rows[cy].data.remove(ec.cx - 1);
                     ec.cx -= 1;
                     ec.j_flag = false;
-                    stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                    // stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                    print!("\x1b[2q\x1b[K");
                     ec.mode = Mode::Normal;
                 } else {
                     ec.rows[cy].data.insert(ec.cx, c);
@@ -824,7 +799,8 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
                 ec.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
                 if ec.cx > 0 {ec.cx -= 1;}
-                stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                // stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                print!("\x1b[2q\x1b[K");
                 ec.mode = Mode::Normal;
             } else if key.code == KeyCode::Enter {
                 auto_indent(ec);
@@ -865,7 +841,8 @@ fn handle_visual(ec: &mut EditorConfig) -> io::Result<bool>{
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Esc {
-                stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                // stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
+                print!("\x1b[2q\x1b[K");
                 ec.mode = Mode::Normal;
             }
             ec.dirty = true;
