@@ -104,7 +104,11 @@ struct EditorConfig {
 
 impl EditorConfig {
     fn new() -> io::Result<Self> {
-        let (cols, rows) = size()?;
+        // This size is hardcoded for termex. figure out a way to
+        // implement the escape codes to do this (moves to bottom corner row, request cursor pos,
+        // what that returns is size)
+        let (mut cols, mut rows) = size()?;
+        if cols > 1000 || rows > 1000 {(cols, rows) = (120, 65)}
 
         Ok(EditorConfig {
             mode: Mode::default(),
