@@ -134,7 +134,7 @@ impl EditorConfig {
                 0xa782f7, // keywords
                 0x88fbd2, // types
                 0xea4d44, // preprocess and ints
-                0x0f0f0f // comments
+                0x808080 // comments
             ],
             // vars: vec![],
             j_flag: false,
@@ -152,7 +152,7 @@ fn main() -> io::Result<()> {
     let mut ec = EditorConfig::new().unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() >= 2 {editor_open(&mut ec, args[1].clone()).unwrap();}
-    // set_config(&mut ec);
+    set_config(&mut ec);
 
 
     let mut refresh = true;
@@ -190,16 +190,16 @@ fn set_config(ec: &mut EditorConfig){
         Err(_) => {
             println!("no config... generating default");
             // default json
-            // let _ = fs::File::create(filename);
             let json = serde_json::to_string(&ec.hl_colors).unwrap();
             if let Some(parent) = Path::new(&conf_path).parent() {
                 let _ = fs::create_dir_all(parent);
             } 
-            fs::write(conf_path, json.clone()).expect(format!("unable to write: {}", json.as_str()).as_str());
+            // fs::write(conf_path, json.clone()).expect(format!("unable to write: {}", json.as_str()).as_str());
+            fs::write(conf_path, json.clone()).unwrap_or_else(|_| panic!("unable to write: {}", json.as_str()));
             json
         }
     };
-    ec.hl_colors = serde_json::from_str(&json).unwrap();
+    ec.hl_colors = serde_json::from_str(&json).unwrap_or_else(|_| panic!("unable to set hl colors: {}", json.as_str()));
     println!("{}", json);
 }
 
