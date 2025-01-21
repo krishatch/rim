@@ -68,14 +68,12 @@ enum Mode {
 
 struct Erow {
     data: String,
-    indent: usize,
 }
 
 impl Erow {
     fn new(s: String) -> Erow {
         Erow {
             data: s,
-            indent: 0,
         }
     }
 }
@@ -734,13 +732,14 @@ let mut motion_done = false;
 }
 
 fn auto_indent(ec: &mut EditorConfig) {
+    // split current line at cursor
     let cy = ec.cy;
     let current_line = ec.rows[cy].data.clone();
-    let indents = ec.rows[cy].indent;
     let (split_left, split_right) = current_line.split_at(ec.cx);
     
-    let leading_spaces = " ".repeat(TAB_LENGTH * ec.rows[cy].indent);
-    // let leading_spaces = leading_whitespace(ec.rows[ec.cy].data.clone());
+    // generate whitespace
+    let whitespace = leading_whitespace(current_line.clone());
+    let leading_spaces = " ".repeat(whitespace);
 
     // Simplified line splitting and insertion
     ec.rows.remove(ec.cy);
@@ -748,28 +747,24 @@ fn auto_indent(ec: &mut EditorConfig) {
     insert_row(ec, ec.cy, split_left.to_string());
     insert_row(ec, ec.cy + 1, format!("{}{}", leading_spaces, split_right));
 
-    // set indent levels
-    ec.rows[cy].indent = indents;
-    ec.rows[cy + 1].indent = indents;
-
     // Calculate indentation for cursor positioning
     let additional_indent = if !split_right.is_empty() && [']', '}', ')'].contains(&split_right.chars().next().unwrap()) {
         // Handle specific closing characters with additional indentation
-        let extra_indent_str = " ".repeat(TAB_LENGTH * (indents + 1)); // Adjust the number of spaces as needed
-        let _ = set_status_message(ec, format!("|{}|", extra_indent_str));
+        let extra_indent_str = " ".repeat(whitespace + TAB_LENGTH);
         insert_row(ec, ec.cy + 1, extra_indent_str.clone());
-        ec.rows[cy + 1].indent = indents + 1;
         TAB_LENGTH // Adjust according to your indentation strategy
     } else {
         0
     };
+
     // set current row to dirty bc we will set cy to next row
     ec.dirty_rows.push(ec.cy - ec.rowoff);
 
     // set all rows below current as dirty because they will shift
     ec.dirty_rows.extend((ec.cy - ec.rowoff + 2)..ec.screenrows);
 
-    ec.cx = leading_spaces.len() + additional_indent;
+    // set cursor
+    ec.cx = whitespace + additional_indent;
     ec.cy += 1;
 }
 
@@ -812,9 +807,6 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
             } else if key.code == KeyCode::Tab {
                 let tab_str = " ".repeat(TAB_LENGTH);
                 let cy: usize = ec.cy;
-                if ec.cx == ec.rows[cy].indent * TAB_LENGTH {
-                    ec.rows[cy].indent += 1;
-                }
                 ec.rows[cy].data.insert_str(ec.cx, &tab_str);
                 ec.cx += TAB_LENGTH;
             } else if key.code == KeyCode::Esc {
@@ -827,11 +819,6 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
                 let cy: usize = ec.cy;
                 let len = ec.rows[cy].data.len();
                 if ec.cx <= len && ec.cx > 0{
-                    // If we are changing the indent level, denote this
-                    if ec.cx == ec.rows[cy].indent * TAB_LENGTH{
-                        ec.rows[cy].indent -= 1;
-                    }
-
                     // Remove char from data
                     ec.rows[cy].data.remove(ec.cx - 1);
                     ec.cx -= 1;
