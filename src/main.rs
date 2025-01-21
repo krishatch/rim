@@ -15,6 +15,7 @@ use crossterm::{cursor::{self, *},
         EnterAlternateScreen, 
         LeaveAlternateScreen
     }, ExecutableCommand};
+use utils::leading_whitespace;
 
 mod utils;
 
@@ -482,12 +483,12 @@ fn a_motion(ec: &mut EditorConfig) {
 }
 
 fn o_motion(ec: &mut EditorConfig){
-    // Insert a new row with the same indention as the current row
-    let indents = ec.rows[ec.cy].indent;
-    let leading_spaces = " ".repeat(indents * TAB_LENGTH);
+    // Insert a new row below with the same indention as the current row
+    let whitespace = leading_whitespace(ec.rows[ec.cy].data.clone());
+    let leading_spaces = " ".repeat(whitespace);
     ec.cy += 1;
+    ec.cx = whitespace + 1;
     ec.rows.insert(ec.cy, Erow::new(leading_spaces));
-    ec.rows[ec.cy].indent = indents;
     ec.numrows += 1;
     // set all rows after as dirty
     ec.dirty_rows.extend((ec.cy - ec.rowoff)..ec.screenrows);
@@ -496,11 +497,11 @@ fn o_motion(ec: &mut EditorConfig){
 }
 
 fn uo_motion(ec: &mut EditorConfig){
-    // Insert a new row with the same indention as the current row
-    let indents = ec.rows[ec.cy].indent;
-    let leading_spaces = " ".repeat(indents * TAB_LENGTH);
+    // Insert a new row above with the same indention as the current row
+    let whitespace = leading_whitespace(ec.rows[ec.cy].data.clone());
+    let leading_spaces = " ".repeat(whitespace);
+    ec.cx = whitespace + 1;
     ec.rows.insert(ec.cy, Erow::new(leading_spaces));
-    ec.rows[ec.cy].indent = indents;
     ec.numrows += 1;
     // set all rows after as dirty
     ec.dirty_rows.extend((ec.cy - ec.rowoff)..ec.screenrows);
@@ -584,7 +585,7 @@ fn dd_motion(ec: &mut EditorConfig){
 }
 
 fn ui_motion(ec: &mut EditorConfig){
-    ec.cx = ec.rows[ec.cy].indent * TAB_LENGTH;
+    ec.cx = leading_whitespace(ec.rows[ec.cy].data.clone());
     let _ = stdout().execute(cursor::SetCursorStyle::SteadyBar);
     ec.mode = Mode::Insert;
 }
@@ -739,6 +740,7 @@ fn auto_indent(ec: &mut EditorConfig) {
     let (split_left, split_right) = current_line.split_at(ec.cx);
     
     let leading_spaces = " ".repeat(TAB_LENGTH * ec.rows[cy].indent);
+    // let leading_spaces = leading_whitespace(ec.rows[ec.cy].data.clone());
 
     // Simplified line splitting and insertion
     ec.rows.remove(ec.cy);
