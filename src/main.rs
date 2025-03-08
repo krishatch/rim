@@ -463,10 +463,12 @@ fn insert_row(ec: &mut EditorConfig, at: usize, s: String) {
 
 fn colon(ec: &mut EditorConfig){
     ec.mode = Mode::Command;
+    let _ = set_status_message(ec, String::default());
     let _ = execute!(stdout(),
         SavePosition,
-        cursor::MoveTo(1, ec.numrows as u16),
+        // cursor::MoveTo(1, ec.numrows as u16),
     );
+    print!("\x1b[1;{}H", ec.numrows);
 }
 
 fn ua_motion(ec: &mut EditorConfig){
