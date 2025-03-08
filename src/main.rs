@@ -107,7 +107,8 @@ impl EditorConfig {
         // implement the escape codes to do this (moves to bottom corner row, request cursor pos,
         // what that returns is size)
         let (mut cols, mut rows) = size()?;
-        if cols > 1000 || rows > 1000 {(cols, rows) = (120, 65)}
+        // print!("rows: {} cols: {}", rows, cols);
+        if cols == 0 || cols > 1000 || rows == 0 || rows > 1000 {(cols, rows) = (60, 24)}
 
         Ok(EditorConfig {
             mode: Mode::default(),
@@ -188,7 +189,7 @@ fn set_config(ec: &mut EditorConfig){
             file_content
         },
         Err(_) => {
-            println!("no config... generating default");
+            // println!("no config... generating default");
             // default json
             let json = serde_json::to_string(&ec.hl_colors).unwrap();
             if let Some(parent) = Path::new(&conf_path).parent() {
@@ -200,7 +201,7 @@ fn set_config(ec: &mut EditorConfig){
         }
     };
     ec.hl_colors = serde_json::from_str(&json).unwrap_or_else(|_| panic!("unable to set hl colors: {}", json.as_str()));
-    println!("{}", json);
+    // println!("{}", json);
 }
 
 fn editor_scroll(ec: &mut EditorConfig) -> io::Result<()> {
