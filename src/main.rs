@@ -774,7 +774,7 @@ fn auto_indent(ec: &mut EditorConfig) {
 fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{ 
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
-            let _ = set_status_message(ec, format!("Insert key read: {:?}", key));
+            // let _ = set_status_message(ec, format!("Insert key read: {:?}", key));
             if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('h') {
             let cy: usize = ec.cy;
             let len = ec.rows[cy].data.len();
@@ -838,6 +838,7 @@ fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{
                 stdout().execute(cursor::SetCursorStyle::SteadyBlock)?;
                 ec.mode = Mode::Normal;
             } else if key.code == KeyCode::Enter {
+                print!("\x1b[K");
                 auto_indent(ec);
             } else if key.code == KeyCode::Backspace {
                 let cy: usize = ec.cy;
