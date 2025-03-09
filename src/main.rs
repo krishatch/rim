@@ -1,6 +1,6 @@
 use std::{env, fs, io::{self, stdout,  Write}, path::Path, process::exit};
 use crossterm::{cursor::{self, *}, 
-    event::{self, Event, KeyCode}, 
+    event::{self, Event, KeyCode, KeyModifiers}, 
     execute, 
     queue, 
     style::{ResetColor, SetColors, SetForegroundColor}, 
@@ -774,7 +774,28 @@ fn auto_indent(ec: &mut EditorConfig) {
 fn handle_insert(ec: &mut EditorConfig) -> io::Result<bool>{ 
     if event::poll(std::time::Duration::from_millis(1))?{
         if let Event::Key(key) = event::read()? {
-            if let KeyCode::Char(c) = key.code {
+            let _ = set_status_message(ec, format!("Insert key read: {:?}", key));
+            if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('h') {
+            let cy: usize = ec.cy;
+            let len = ec.rows[cy].data.len();
+            if ec.cx <= len && ec.cx > 0{
+                // Remove char from data
+                ec.rows[cy].data.remove(ec.cx - 1);
+                ec.cx -= 1;
+            } else if ec.cx == 0 && ec.cy > 0 {
+                // delete the current line
+                let cur_str = ec.rows[cy].data.clone();
+                let new_cx = ec.rows[cy - 1].data.len();
+                ec.rows[cy - 1].data.push_str(&cur_str);
+                ec.rows.remove(cy);
+
+                //set all rows below as dirty because they need to shift up
+                ec.dirty_rows.extend((ec.cy - ec.rowoff)..ec.screenrows);
+                ec.cy -= 1;
+                ec.cx = new_cx;
+                ec.numrows -= 1;
+                }
+            } else if let KeyCode::Char(c) = key.code {
                 let cy: usize = ec.cy;
                 if ec.j_flag && c == 'k' {
                     ec.rows[cy].data.remove(ec.cx - 1);
