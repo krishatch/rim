@@ -1,5 +1,5 @@
 use std::{env, fs, io::{self, stdout,  Write}, path::Path, process::exit};
-use crossterm::{cursor::{self, *}, 
+use crossterm::{cursor::{self}, 
     event::{self, Event, KeyCode, KeyModifiers}, 
     execute, 
     queue, 
@@ -236,11 +236,11 @@ fn refresh_screen(ec: &mut EditorConfig) -> io::Result<()>{
     // set up terminal for writing to screen
     let _ = editor_scroll(ec);
     ec.dirty_rows.push(ec.cy - ec.rowoff);
-    queue!(stdout(), 
-        cursor::Hide,
-        cursor::MoveTo(0, ec.numrows as u16 + 2),
-        terminal::Clear(ClearType::CurrentLine),
-    )?;
+    // queue!(stdout(), 
+    //     cursor::Hide,
+    //     cursor::MoveTo(0, ec.numrows as u16),
+    //     terminal::Clear(ClearType::CurrentLine),
+    // )?;
 
     let rowoff: usize = ec.rowoff;
     for y in ec.dirty_rows.clone() {
@@ -370,7 +370,6 @@ fn draw_status(ec: &mut EditorConfig) -> io::Result<()> {
         Mode::Command => (crossterm::style::Color::Yellow, "COMMAND"),
     };
     queue!(stdout(),
-        SavePosition,
         cursor::MoveTo(0, ec.screenrows as u16),
         SetColors(crossterm::style::Colors{ foreground: Some(crossterm::style::Color::Black), background: Some(mode_color)}),
         crossterm::style::Print(mode_string),
@@ -396,7 +395,6 @@ fn draw_status(ec: &mut EditorConfig) -> io::Result<()> {
         ),
         crossterm::style::Print("\r\n"),
         crossterm::style::Print(ec.status_msg.clone()),
-        RestorePosition
     )?;
     Ok(())
 }
@@ -464,10 +462,6 @@ fn insert_row(ec: &mut EditorConfig, at: usize, s: String) {
 fn colon(ec: &mut EditorConfig){
     ec.mode = Mode::Command;
     let _ = set_status_message(ec, String::default());
-    let _ = execute!(stdout(),
-        SavePosition,
-        // cursor::MoveTo(1, ec.numrows as u16),
-    );
     print!("\x1b[1;{}H", ec.numrows);
 }
 
@@ -887,7 +881,6 @@ fn handle_command(ec: &mut EditorConfig) -> io::Result<bool>{
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Esc {
                 ec.command = String::default();
-                stdout().execute(RestorePosition)?;
                 ec.mode = Mode::Normal;
             }
             if let KeyCode::Char(c) = key.code {
@@ -901,7 +894,6 @@ fn handle_command(ec: &mut EditorConfig) -> io::Result<bool>{
                     "w" => {
                         editor_save(ec)?;
                         set_status_message(ec, format!("{} {}L written", ec.filename, ec.numrows))?;
-                        stdout().execute(RestorePosition)?;
                     }
                     "q" => {
                         if !(ec.dirty) {
@@ -910,7 +902,6 @@ fn handle_command(ec: &mut EditorConfig) -> io::Result<bool>{
                             exit(0);
                         } else {
                             set_status_message(ec, String::from("FILE HAS NOT BEEN SAVED!"))?;
-                            stdout().execute(RestorePosition)?;
                         }
                     }
                     "wq" => {
@@ -925,7 +916,6 @@ fn handle_command(ec: &mut EditorConfig) -> io::Result<bool>{
                         exit(0);
                     }
                     _ => {
-                        stdout().execute(RestorePosition)?;
                     }
                 }
                 ec.command = String::default();
